@@ -6,3 +6,6 @@ __pycache__/
 
 # IDE
 .idea/
+
+# 交付包
+交付包/
