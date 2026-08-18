@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本地 AI 工作台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: #f5f6fa; color: #2d3436; height: 100vh; display: flex; flex-direction: column; }
+  header { background: #2d3436; color: #fff; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 17px; font-weight: 600; }
+  .badge { background: #00b894; padding: 3px 10px; border-radius: 12px; font-size: 12px; }
+  .badge.warn { background: #fdcb6e; color: #2d3436; }
+  nav { display: flex; gap: 4px; padding: 8px 20px 0; background: #fff; border-bottom: 1px solid #dfe6e9; }
+  nav button { border: none; background: none; padding: 8px 18px; font-size: 14px; cursor: pointer; color: #636e72; border-bottom: 2px solid transparent; }
+  nav button.active { color: #0984e3; border-bottom-color: #0984e3; font-weight: 600; }
+  main { flex: 1; display: flex; min-height: 0; }
+  .view { flex: 1; display: none; flex-direction: column; min-width: 0; }
+  .view.active { display: flex; }
+  /* ---- 对话 ---- */
+  #messages { flex: 1; overflow-y: auto; padding: 20px; }
+  .msg { max-width: 78%; margin-bottom: 14px; padding: 10px 14px; border-radius: 10px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: #0984e3; color: #fff; margin-left: auto; }
+  .msg.ai { background: #fff; border: 1px solid #dfe6e9; }
+  .msg .src { font-size: 12px; color: #636e72; margin-top: 8px; border-top: 1px dashed #dfe6e9; padding-top: 6px; }
+  .msg .src b { color: #0984e3; }
+  #inputbar { display: flex; gap: 10px; padding: 14px 20px; background: #fff; border-top: 1px solid #dfe6e9; }
+  #inputbar textarea { flex: 1; resize: none; height: 44px; padding: 10px 12px; border: 1px solid #dfe6e9; border-radius: 8px; font-size: 14px; font-family: inherit; }
+  #inputbar button { padding: 0 22px; background: #0984e3; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  #inputbar button:disabled { background: #b2bec3; cursor: not-allowed; }
+  .hint { color: #b2bec3; font-size: 12px; text-align: center; padding: 20px; }
+  /* ---- 监控 ---- */
+  #monitor { overflow-y: auto; padding: 16px 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: #fff; border: 1px solid #dfe6e9; border-radius: 10px; padding: 12px 14px; }
+  .card .num { font-size: 22px; font-weight: 700; color: #2d3436; }
+  .card .lbl { font-size: 12px; color: #636e72; margin-top: 4px; }
+  .card.warn .num { color: #d63031; }
+  .panel { background: #fff; border: 1px solid #dfe6e9; border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+  .panel h3 { font-size: 14px; padding: 12px 16px; border-bottom: 1px solid #dfe6e9; color: #2d3436; }
+  .panel .body { padding: 12px 16px; }
+  .warn-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px dashed #eee; font-size: 13px; }
+  .warn-item:last-child { border-bottom: none; }
+  .badge-red { background: #ffeaa7; color: #d63031; border-radius: 8px; padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+  .toolbar { display: flex; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #dfe6e9; flex-wrap: wrap; }
+  .toolbar select, .toolbar button { padding: 5px 12px; border: 1px solid #dfe6e9; border-radius: 6px; background: #fff; font-size: 13px; cursor: pointer; }
+  .toolbar button.primary { background: #0984e3; color: #fff; border-color: #0984e3; }
+  .toolbar label { font-size: 13px; color: #636e72; display: flex; align-items: center; gap: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #f0f0f0; }
+  th { background: #fafafa; color: #636e72; font-weight: 600; white-space: nowrap; }
+  td { word-break: break-all; }
+  .lvl { padding: 1px 8px; border-radius: 8px; font-size: 12px; }
+  .lvl.ok { background: #dfe6e9; color: #2d3436; }
+  .lvl.err { background: #fab1a0; color: #c0392b; }
+  .type-badge { padding: 1px 8px; border-radius: 8px; font-size: 12px; }
+  .type-badge.chat_request { background: #dff9fb; color: #0984e3; }
+  .type-badge.retrieval { background: #f6e58d; color: #8e6b00; }
+  .type-badge.upload { background: #dcdde1; color: #40739e; }
+  .type-badge.delete { background: #f8c291; color: #b71540; }
+  .type-badge.system { background: #e8e8e8; color: #666; }
+  .type-badge.tool_text { background: #dff9fb; color: #0a8f9c; }
+  .type-badge.tool_image { background: #e8daef; color: #7d3c98; }
+  .type-badge.tool_table { background: #d5f5e3; color: #1e8449; }
+  /* ---- 工具 ---- */
+  #tools { overflow-y: auto; padding: 16px 20px; }
+  .tool-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .tool-row textarea { width: 100%; min-height: 90px; padding: 10px; border: 1px solid #dfe6e9; border-radius: 8px; font-size: 13px; font-family: inherit; resize: vertical; }
+  .tool-row select, .tool-row input[type=text] { padding: 7px 10px; border: 1px solid #dfe6e9; border-radius: 6px; font-size: 13px; }
+  .tool-row button { padding: 8px 20px; background: #0984e3; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .tool-row button.sec { background: #636e72; }
+  .tool-row button:disabled { background: #b2bec3; cursor: not-allowed; }
+  .tool-row label { font-size: 13px; color: #636e72; }
+  #txtResults .item, .tool-result { border: 1px solid #dfe6e9; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+  #txtResults .item .orig { color: #b2bec3; font-size: 12px; }
+  #imgResults { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  #imgResults .cell { border: 1px solid #dfe6e9; border-radius: 8px; padding: 8px; font-size: 12px; }
+  #imgResults img { width: 100%; border-radius: 6px; }
+  #imgResults a { color: #0984e3; }
+  .tool-result .ok { color: #1e8449; font-weight: 600; }
+  .tool-result .err { color: #d63031; }
+  /* ---- 侧栏 ---- */
+  aside { width: 300px; background: #fff; border-left: 1px solid #dfe6e9; display: flex; flex-direction: column; }
+  aside h2 { font-size: 14px; padding: 14px 16px 8px; color: #636e72; }
+  .drop { margin: 4px 16px 10px; padding: 18px; border: 2px dashed #b2bec3; border-radius: 8px; text-align: center; color: #636e72; font-size: 13px; cursor: pointer; transition: all .2s; }
+  .drop:hover, .drop.over { border-color: #0984e3; background: #dfe6e9; }
+  #docs { flex: 1; overflow-y: auto; padding: 0 16px 16px; }
+  .doc { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid #dfe6e9; border-radius: 6px; margin-bottom: 8px; font-size: 13px; }
+  .doc .meta { display: flex; flex-direction: column; }
+  .doc .meta small { color: #b2bec3; }
+  .doc button { background: none; border: none; color: #d63031; cursor: pointer; font-size: 14px; }
+  #clearBtn { margin: 10px 16px; padding: 8px; background: #fff; border: 1px solid #dfe6e9; border-radius: 6px; cursor: pointer; color: #636e72; }
+  #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); background: #2d3436; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; display: none; z-index: 99; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🤖 本地 AI 工作台</h1>
+  <div><span class="badge" id="statusBadge">连接中…</span></div>
+</header>
+<nav>
+  <button id="tabChat" class="active">💬 对话</button>
+  <button id="tabMonitor">📊 运行监控</button>
+  <button id="tabTools">🧰 工具</button>
+</nav>
+<main>
+  <!-- 对话视图 -->
+  <section id="view-chat" class="view active">
+    <div id="messages"><div class="hint">你好！我是运行在你本地的 AI 助手。<br>右侧可以上传文档建立知识库，然后向我提问；数据全程保存在这台电脑上。</div></div>
+    <div id="inputbar">
+      <textarea id="input" placeholder="输入问题，回车发送…"></textarea>
+      <button id="sendBtn">发送</button>
+    </div>
+  </section>
+
+  <!-- 监控视图 -->
+  <section id="view-monitor" class="view">
+    <div id="monitor">
+      <div class="cards" id="cards"></div>
+      <div class="panel">
+        <h3>⚠️ 冗余 / 无效运行检测</h3>
+        <div class="body" id="warnBox"></div>
+      </div>
+      <div class="panel">
+        <h3>📋 运行日志明细</h3>
+        <div class="toolbar">
+          <select id="logType">
+            <option value="">全部类型</option>
+            <option value="chat_request">对话(模型调用)</option>
+            <option value="retrieval">知识库检索</option>
+            <option value="upload">上传文档</option>
+            <option value="delete">删除文档</option>
+            <option value="tool_text">工具·文本</option>
+            <option value="tool_image">工具·作图</option>
+            <option value="tool_table">工具·表格</option>
+            <option value="system">系统</option>
+          </select>
+          <button id="refreshLogs">🔄 刷新</button>
+          <label><input type="checkbox" id="autoRefresh"> 自动刷新(5秒)</label>
+          <button id="clearLogs" style="margin-left:auto;color:#d63031;">清空日志</button>
+        </div>
+        <table>
+          <thead><tr><th>时间</th><th>类型</th><th>状态</th><th>耗时</th><th>tokens(进/出)</th><th>详情</th></tr></thead>
+          <tbody id="logRows"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 工具视图 -->
+  <section id="view-tools" class="view">
+    <div id="tools">
+      <div class="panel">
+        <h3>① 批量文本处理（翻译 / 改写 / 生成文案）</h3>
+        <div class="body">
+          <div class="tool-row"><textarea id="txtInput" placeholder="每行一条待处理文本，例如：&#10;夏季新款连衣裙 显瘦气质&#10;轻便透气运动鞋 缓震耐磨"></textarea></div>
+          <div class="tool-row">
+            <select id="txtMode">
+              <option value="rewrite">✍️ 改写优化</option>
+              <option value="translate">🌐 翻译</option>
+              <option value="generate">✨ 要点生成文案</option>
+            </select>
+            <input type="text" id="txtLang" placeholder="目标语言(翻译时用)" value="英文" style="width:150px;">
+            <input type="text" id="txtInst" placeholder="附加要求，如：电商标题、口语化" style="flex:1;min-width:200px;">
+            <button id="txtRun">🚀 运行</button>
+          </div>
+          <div id="txtResults"></div>
+          <div class="tool-row" id="txtActions" style="display:none;">
+            <button class="sec" id="txtCopy">📋 复制全部结果</button>
+            <button class="sec" id="txtDownload">⬇️ 下载 TXT</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>② 批量作图</h3>
+        <div class="body">
+          <div class="tool-row"><textarea id="imgInput" placeholder="每行一个图片提示词，例如：&#10;红色连衣裙 白底产品图 电商风格&#10;无线蓝牙耳机 黑色 极简 广告图"></textarea></div>
+          <div class="tool-row">
+            <select id="imgSize">
+              <option value="512x512">512×512 (快)</option>
+              <option value="1024x1024">1024×1024 (高清)</option>
+            </select>
+            <label id="imgModeHint">当前模式: 占位图</label>
+            <button id="imgRun">🎨 生成</button>
+          </div>
+          <div id="imgResults"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>③ 表格处理（Excel / CSV 批量处理某一列）</h3>
+        <div class="body">
+          <div class="tool-row">
+            <input type="file" id="tableFile" accept=".xlsx,.csv">
+            <button class="sec" id="tableParse">📖 解析表格</button>
+            <label id="tableFileInfo"></label>
+          </div>
+          <div class="tool-row">
+            <select id="tableCol" style="display:none;"></select>
+            <select id="tableMode">
+              <option value="rewrite">✍️ 改写优化</option>
+              <option value="translate">🌐 翻译</option>
+              <option value="generate">✨ 要点生成文案</option>
+            </select>
+            <input type="text" id="tableLang" value="英文" style="width:150px;">
+            <input type="text" id="tableInst" placeholder="附加要求" style="flex:1;min-width:150px;">
+            <button id="tableRun" disabled>🚀 处理并下载</button>
+          </div>
+          <div id="tableOut"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 侧栏：知识库 -->
+  <aside>
+    <h2>📚 知识库</h2>
+    <div class="drop" id="drop">点击或拖拽文件到这里<br><small>支持 .txt / .md / .csv / .json / .log</small></div>
+    <div id="docs"></div>
+    <button id="clearBtn">🗑 清空对话</button>
+  </aside>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let docs = [];
+let autoTimer = null;
+let tableColumns = [];
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2600);
+}
+
+async function refreshStatus() {
+  try {
+    const r = await fetch('/api/config'); const c = await r.json();
+    const b = $('statusBadge');
+    b.textContent = `模型: ${c.provider}${c.model !== '-' ? ' · ' + c.model : ''} · 检索: ${c.retrieval} · 知识库 ${c.docs} 篇`;
+    b.className = 'badge' + (c.provider === 'mock' ? ' warn' : '');
+    $('imgModeHint').textContent = c.image_provider === 'api' ? '当前模式: 真实生图' : '当前模式: 占位图(未接生图API)';
+  } catch (e) { $('statusBadge').textContent = '服务未连接'; }
+}
+
+/* ---------- 对话 ---------- */
+function addMsg(role, text, sources) {
+  const box = $('messages');
+  const div = document.createElement('div');
+  div.className = 'msg ' + (role === 'user' ? 'user' : 'ai');
+  div.textContent = text;
+  if (role === 'ai' && sources && sources.length) {
+    const s = document.createElement('div');
+    s.className = 'src';
+    s.innerHTML = '📎 参考文档: ' + sources.map(x => `<b>《${x.doc}》</b>${x.heading ? ' · ' + x.heading : ''}`).join('、');
+    div.appendChild(s);
+  }
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function send() {
+  const input = $('input'); const msg = input.value.trim();
+  if (!msg) return;
+  input.value = ''; addMsg('user', msg);
+  const btn = $('sendBtn'); btn.disabled = true;
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg, use_kb: true })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '请求失败');
+    addMsg('ai', j.answer, j.sources);
+  } catch (e) { addMsg('ai', '⚠️ ' + e.message); }
+  btn.disabled = false;
+}
+
+/* ---------- 知识库 ---------- */
+async function loadDocs() {
+  const r = await fetch('/api/documents'); const j = await r.json();
+  docs = j.documents || [];
+  const box = $('docs');
+  box.innerHTML = docs.length ? '' : '<div class="hint">还没有文档，先上传一个吧</div>';
+  docs.forEach(d => {
+    const row = document.createElement('div'); row.className = 'doc';
+    row.innerHTML = `<div class="meta"><span>📄 ${d.name}</span><small>${d.chunks} 段 · ${d.added}</small></div><button title="删除">✕</button>`;
+    row.querySelector('button').onclick = async () => {
+      await fetch('/api/documents/' + d.id, { method: 'DELETE' });
+      loadDocs(); refreshStatus();
+    };
+    box.appendChild(row);
+  });
+}
+
+async function uploadFile(file) {
+  if (!file) return;
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const r = await fetch('/api/documents', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '上传失败');
+    toast(`已导入《${j.name}》(${j.chunks} 段)`);
+    loadDocs(); refreshStatus();
+  } catch (e) { toast('⚠️ ' + e.message); }
+}
+
+/* ---------- 运行监控 ---------- */
+const TYPE_LABEL = { chat_request: '对话', retrieval: '检索', upload: '上传', delete: '删除', system: '系统', tool_text: '工具·文本', tool_image: '工具·作图', tool_table: '工具·表格', other: '其他' };
+
+async function loadStats() {
+  try {
+    const r = await fetch('/api/stats'); const s = await r.json();
+    const cards = [
+      { num: s.chat_calls, lbl: '对话次数' },
+      { num: s.tokens_in.toLocaleString(), lbl: '输入 tokens' },
+      { num: s.tokens_out.toLocaleString(), lbl: '输出 tokens' },
+      { num: '$' + s.est_cost, lbl: `估算成本(输入 $${s.price_in}/M)` },
+      { num: s.errors, lbl: '错误次数', warn: s.errors > 0 },
+      { num: s.avg_duration_ms, lbl: '平均耗时(ms)' },
+    ];
+    $('cards').innerHTML = cards.map(c =>
+      `<div class="card${c.warn ? ' warn' : ''}"><div class="num">${c.num}</div><div class="lbl">${c.lbl}</div></div>`
+    ).join('');
+
+    const wb = $('warnBox');
+    let html = '';
+    if (s.redundant.length) {
+      html += `<div style="font-size:13px;color:#d63031;margin-bottom:8px;">⚠️ 检测到 ${s.redundant.length} 组重复提问：</div>`;
+      s.redundant.forEach(r => {
+        html += `<div class="warn-item"><span>「${r.message}」 被问了 <b>${r.count}</b> 次</span><span class="badge-red">约浪费 ${r.wasted_tokens} tokens</span></div>`;
+      });
+    }
+    if (s.zero_hit_retrievals > 0) {
+      html += `<div class="warn-item"><span>🔍 知识库 0 命中检索 ${s.zero_hit_retrievals} 次</span><span class="badge-red">建议核对知识库内容</span></div>`;
+    }
+    if (s.dedup_removed > 0) {
+      html += `<div class="warn-item"><span>🧹 召回去重已拦截 ${s.dedup_removed} 条重复内容</span><span class="badge-red">✓ 已自动处理</span></div>`;
+    }
+    wb.innerHTML = html || '<div class="hint">✓ 暂无冗余/无效运行，调用健康</div>';
+  } catch (e) { $('cards').innerHTML = '<div class="hint">监控数据获取失败</div>'; }
+}
+
+async function loadLogs() {
+  try {
+    const type = $('logType').value;
+    const url = '/api/logs?limit=100' + (type ? '&type=' + type : '');
+    const r = await fetch(url); const j = await r.json();
+    const rows = $('logRows');
+    if (!j.logs.length) { rows.innerHTML = '<tr><td colspan="6"><div class="hint">暂无日志</div></td></tr>'; return; }
+    rows.innerHTML = j.logs.map(l => {
+      const dur = l.duration_ms != null ? l.duration_ms + 'ms' : '-';
+      const tok = l.tokens_in != null ? `${l.tokens_in} / ${l.tokens_out}` : '-';
+      let detail = l.message || l.name || l.error || '-';
+      if (l.hits != null) detail += l.type === 'retrieval' ? ` (命中${l.hits}段)` : '';
+      if (l.removed != null && l.removed > 0) detail += ` (去重${l.removed})`;
+      if (l.top_score != null) detail += ` [得分${l.top_score}]`;
+      if (l.error) detail = '❌ ' + l.error;
+      return `<tr>
+        <td style="white-space:nowrap;">${l.ts}</td>
+        <td><span class="type-badge ${l.type || 'other'}">${TYPE_LABEL[l.type] || l.type}</span></td>
+        <td><span class="lvl ${l.level === 'error' ? 'err' : 'ok'}">${l.level === 'error' ? '错误' : '正常'}</span></td>
+        <td>${dur}</td>
+        <td style="white-space:nowrap;">${tok}</td>
+        <td title="${(detail || '').replace(/"/g, '&quot;')}">${(detail || '').slice(0, 60)}${(detail || '').length > 60 ? '…' : ''}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) { $('logRows').innerHTML = '<tr><td colspan="6"><div class="hint">日志获取失败</div></td></tr>'; }
+}
+
+function refreshMonitor() { loadStats(); loadLogs(); }
+
+/* ---------- 工具：批量文本 ---------- */
+let txtLastResults = [];
+async function runTxtBatch() {
+  const items = $('txtInput').value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!items.length) { toast('请先输入至少一行文本'); return; }
+  const btn = $('txtRun'); btn.disabled = true; btn.textContent = '处理中…';
+  const box = $('txtResults');
+  box.innerHTML = '<div class="hint">正在处理 ' + items.length + ' 条，请稍候…</div>';
+  try {
+    const r = await fetch('/api/tools/text/batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items, mode: $('txtMode').value, language: $('txtLang').value, instruction: $('txtInst').value })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '处理失败');
+    txtLastResults = j.results;
+    box.innerHTML = j.results.map((res, i) =>
+      `<div class="item"><div class="orig">${i + 1}. ${items[i]}</div><div>${res.replace(/</g, '&lt;')}</div></div>`
+    ).join('');
+    $('txtActions').style.display = 'flex';
+    toast('处理完成');
+  } catch (e) { box.innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`; }
+  btn.disabled = false; btn.textContent = '🚀 运行';
+}
+
+function downloadText(filename, text) {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ---------- 工具：批量作图 ---------- */
+async function runImgBatch() {
+  const prompts = $('imgInput').value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!prompts.length) { toast('请先输入至少一行提示词'); return; }
+  const btn = $('imgRun'); btn.disabled = true; btn.textContent = '生成中…';
+  const box = $('imgResults');
+  box.innerHTML = '<div class="hint">正在生成 ' + prompts.length + ' 张图片…</div>';
+  try {
+    const r = await fetch('/api/tools/image/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompts, size: $('imgSize').value })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '生成失败');
+    box.innerHTML = j.images.map(img => {
+      if (img.error) return `<div class="cell">❌ ${img.error}</div>`;
+      return `<div class="cell"><img src="${img.url}"><div>${img.prompt}</div><a href="${img.url}" download>⬇️ 下载</a></div>`;
+    }).join('');
+    toast('生成完成');
+  } catch (e) { box.innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`; }
+  btn.disabled = false; btn.textContent = '🎨 生成';
+}
+
+/* ---------- 工具：表格处理 ---------- */
+let tableFileObj = null;
+async function parseTable() {
+  const f = $('tableFile').files[0];
+  if (!f) { toast('请先选择表格文件'); return; }
+  tableFileObj = f;
+  const fd = new FormData(); fd.append('file', f);
+  const r = await fetch('/api/tools/table/preview', { method: 'POST', body: fd });
+  const j = await r.json();
+  if (!r.ok) { toast('⚠️ ' + (j.error || '解析失败')); return; }
+  tableColumns = j.columns || [];
+  const sel = $('tableCol');
+  sel.style.display = 'inline-block';
+  sel.innerHTML = tableColumns.map(c => `<option value="${c}">${c}</option>`).join('');
+  $('tableFileInfo').textContent = `${f.name} · ${j.total_rows} 行 · ${tableColumns.length} 列`;
+  $('tableRun').disabled = false;
+  $('tableOut').innerHTML = '<div class="hint">表格解析成功。选择要处理的列，然后点"处理并下载"。</div>';
+  toast('解析成功');
+}
+
+async function processTable() {
+  if (!tableFileObj) { toast('请先解析表格'); return; }
+  const btn = $('tableRun'); btn.disabled = true; btn.textContent = '处理中…';
+  const fd = new FormData();
+  fd.append('file', tableFileObj);
+  fd.append('column', $('tableCol').value);
+  fd.append('mode', $('tableMode').value);
+  fd.append('language', $('tableLang').value);
+  fd.append('instruction', $('tableInst').value);
+  try {
+    const r = await fetch('/api/tools/table/process', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '处理失败');
+    const box = $('tableOut');
+    let previewHtml = '<table><thead><tr>' + j.preview[0].map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
+      j.preview.slice(1).map(row => '<tr>' + row.map(c => `<td>${c}</td>`).join('') + '</tr>').join('') + '</tbody></table>';
+    box.innerHTML = `<div class="tool-result"><span class="ok">✅ 处理完成，共 ${j.rows} 行</span><br><a href="${j.download}" download>⬇️ 点击下载结果文件</a>${previewHtml}</div>`;
+    toast('处理完成');
+  } catch (e) { $('tableOut').innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`; }
+  btn.disabled = false; btn.textContent = '🚀 处理并下载';
+}
+
+/* ---------- 事件绑定 ---------- */
+$('sendBtn').onclick = send;
+$('input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+$('clearBtn').onclick = () => { $('messages').innerHTML = '<div class="hint">对话已清空</div>'; };
+$('drop').onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.txt,.md,.csv,.json,.log'; i.onchange = () => uploadFile(i.files[0]); i.click(); };
+$('drop').addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('over'); });
+$('drop').addEventListener('dragleave', () => $('drop').classList.remove('over'));
+$('drop').addEventListener('drop', e => { e.preventDefault(); $('drop').classList.remove('over'); uploadFile(e.dataTransfer.files[0]); });
+
+$('tabChat').onclick = () => switchTab('chat');
+$('tabMonitor').onclick = () => switchTab('monitor');
+$('tabTools').onclick = () => switchTab('tools');
+function switchTab(which) {
+  ['chat', 'monitor', 'tools'].forEach(t => {
+    $('tab' + t[0].toUpperCase() + t.slice(1)).classList.toggle('active', which === t);
+    $('view-' + t).classList.toggle('active', which === t);
+  });
+  if (which === 'monitor') { refreshMonitor(); startAuto(); } else { stopAuto(); }
+}
+function startAuto() {
+  if (!autoTimer) autoTimer = setInterval(() => { if ($('autoRefresh').checked) refreshMonitor(); }, 5000);
+}
+function stopAuto() { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } }
+$('refreshLogs').onclick = refreshMonitor;
+$('logType').onchange = loadLogs;
+$('clearLogs').onclick = async () => {
+  if (!confirm('确定清空全部运行日志吗？(不影响知识库数据)')) return;
+  await fetch('/api/logs/clear', { method: 'POST' });
+  toast('日志已清空'); refreshMonitor();
+};
+
+$('txtRun').onclick = runTxtBatch;
+$('txtCopy').onclick = () => { navigator.clipboard.writeText(txtLastResults.join('\n')).then(() => toast('已复制')); };
+$('txtDownload').onclick = () => downloadText('批量文本结果.txt', txtLastResults.join('\n---\n'));
+$('imgRun').onclick = runImgBatch;
+$('tableParse').onclick = parseTable;
+$('tableRun').onclick = processTable;
+
+refreshStatus(); loadDocs(); loadLogs();
+</script>
+</body>
+</html>

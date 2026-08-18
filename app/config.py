@@ -1,0 +1,94 @@
+"""配置加载：支持 .env 文件 + 环境变量。"""
+import os
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Settings:
+    provider: str = "mock"          # mock | ollama | openai
+    ollama_base: str = "http://localhost:11434"
+    ollama_model: str = "qwen2.5:3b"
+    openai_base: str = "https://api.deepseek.com/v1"
+    openai_key: str = ""
+    openai_model: str = "deepseek-chat"
+    data_dir: str = "data"
+    upload_dir: str = "data/uploads"
+    chunk_size: int = 400
+    chunk_min_size: int = 80
+    top_k: int = 3
+    host: str = "127.0.0.1"
+    port: int = 8000
+    # 成本估算参考价（每百万 token，USD；DeepSeek V3.2 参考价，可按需修改）
+    price_in: float = 0.14
+    price_out: float = 0.55
+    # 向量化(Embedding)配置
+    embed_provider: str = "auto"        # auto | local | ollama | api | lexical
+    embed_ollama_base: str = "http://localhost:11434"
+    embed_ollama_model: str = "nomic-embed-text"
+    embed_api_base: str = ""
+    embed_api_key: str = ""
+    embed_api_model: str = ""
+    embed_local_model: str = "BAAI/bge-small-zh-v1.5"
+    # 检索阈值与去重
+    retrieve_threshold: float = 0.38          # 语义向量相似度下限
+    retrieve_lexical_threshold: float = 0.05  # 词法相似度下限
+    dedup_threshold: float = 0.60             # 内容重叠去重阈值
+    # 批量作图配置
+    image_provider: str = "mock"    # mock(占位图) | api(真实生图)
+    image_api_base: str = ""
+    image_api_key: str = ""
+    image_api_model: str = ""
+
+
+def _load_dotenv(path: str = ".env") -> None:
+    """极简 .env 解析（不依赖第三方库），已存在的环境变量优先。"""
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except Exception:
+        pass
+
+
+def load_settings() -> Settings:
+    _load_dotenv()
+    s = Settings()
+    s.provider = os.environ.get("LLM_PROVIDER", s.provider).strip().lower()
+    s.ollama_base = os.environ.get("OLLAMA_BASE_URL", s.ollama_base).strip()
+    s.ollama_model = os.environ.get("OLLAMA_MODEL", s.ollama_model).strip()
+    s.openai_base = os.environ.get("OPENAI_BASE_URL", s.openai_base).strip()
+    s.openai_key = os.environ.get("OPENAI_API_KEY", s.openai_key).strip()
+    s.openai_model = os.environ.get("OPENAI_MODEL", s.openai_model).strip()
+    s.data_dir = os.environ.get("DATA_DIR", s.data_dir).strip()
+    s.upload_dir = os.environ.get("UPLOAD_DIR", os.path.join(s.data_dir, "uploads")).strip()
+    s.host = os.environ.get("HOST", s.host).strip()
+    s.port = int(os.environ.get("PORT", str(s.port)))
+    s.price_in = float(os.environ.get("PRICE_IN_PER_M", str(s.price_in)))
+    s.price_out = float(os.environ.get("PRICE_OUT_PER_M", str(s.price_out)))
+    s.embed_provider = os.environ.get("EMBED_PROVIDER", s.embed_provider).strip().lower()
+    s.embed_ollama_base = os.environ.get("EMBED_OLLAMA_BASE_URL", s.embed_ollama_base).strip()
+    s.embed_ollama_model = os.environ.get("EMBED_OLLAMA_MODEL", s.embed_ollama_model).strip()
+    s.embed_api_base = os.environ.get("EMBED_API_BASE_URL", s.embed_api_base).strip()
+    s.embed_api_key = os.environ.get("EMBED_API_KEY", s.embed_api_key).strip()
+    s.embed_api_model = os.environ.get("EMBED_API_MODEL", s.embed_api_model).strip()
+    s.embed_local_model = os.environ.get("EMBED_LOCAL_MODEL", s.embed_local_model).strip()
+    s.retrieve_threshold = float(os.environ.get("RETRIEVE_THRESHOLD", str(s.retrieve_threshold)))
+    s.retrieve_lexical_threshold = float(
+        os.environ.get("RETRIEVE_LEXICAL_THRESHOLD", str(s.retrieve_lexical_threshold))
+    )
+    s.dedup_threshold = float(os.environ.get("DEDUP_THRESHOLD", str(s.dedup_threshold)))
+    s.chunk_min_size = int(os.environ.get("CHUNK_MIN_SIZE", str(s.chunk_min_size)))
+    s.image_provider = os.environ.get("IMAGE_PROVIDER", s.image_provider).strip().lower()
+    s.image_api_base = os.environ.get("IMAGE_API_BASE_URL", s.image_api_base).strip()
+    s.image_api_key = os.environ.get("IMAGE_API_KEY", s.image_api_key).strip()
+    s.image_api_model = os.environ.get("IMAGE_API_MODEL", s.image_api_model).strip()
+    return s

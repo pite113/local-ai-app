@@ -1,0 +1,260 @@
+"""本地 AI 工作台 —— Web 应用入口。"""
+import os
+import time
+
+from flask import Flask, jsonify, request, send_file
+
+from .config import load_settings
+from .embeddings import get_embedder
+from .llm import get_llm
+from .logger import LogStore
+from .rag import Index
+from . import tools as tool_mod
+
+settings = load_settings()
+# 统一转绝对路径：避免 Flask send_file 相对路径解析到 app/ 目录的坑
+settings.data_dir = os.path.abspath(settings.data_dir)
+settings.upload_dir = os.path.abspath(settings.upload_dir)
+os.makedirs(settings.data_dir, exist_ok=True)
+os.makedirs(settings.upload_dir, exist_ok=True)
+
+embedder = get_embedder(settings)
+index = Index(
+    os.path.join(settings.data_dir, "index.json"),
+    embedder=embedder,
+    threshold=settings.retrieve_threshold,
+    lexical_threshold=settings.retrieve_lexical_threshold,
+    dedup_threshold=settings.dedup_threshold,
+)
+logs = LogStore(os.path.join(settings.data_dir, "logs.jsonl"))
+llm = get_llm(settings)
+
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 单文件最大 20MB
+_STATIC = os.path.join(os.path.dirname(__file__), "static")
+
+SYSTEM_PROMPT = (
+    "你是一个部署在客户本地、保护隐私的 AI 助手，请始终用中文回答。"
+    "当用户提供参考资料时，优先依据参考资料回答；"
+    "如果参考资料不足以回答，请明确说明。回答末尾列出引用的文档名。"
+)
+
+
+def _cost(tokens_in: int, tokens_out: int) -> float:
+    return tokens_in / 1e6 * settings.price_in + tokens_out / 1e6 * settings.price_out
+
+
+@app.get("/")
+def home():
+    return send_file(os.path.join(_STATIC, "index.html"))
+
+
+@app.get("/api/health")
+def health():
+    return jsonify(status="ok", provider=llm.name, model=getattr(llm, "model", "-"))
+
+
+@app.get("/api/config")
+def config():
+    return jsonify(
+        provider=llm.name,
+        model=getattr(llm, "model", "-"),
+        retrieval=embedder.name,
+        image_provider=settings.image_provider,
+        docs=len(index.list()),
+    )
+
+
+@app.post("/api/chat")
+def chat():
+    body = request.get_json(silent=True) or {}
+    msg = (body.get("message") or "").strip()
+    if not msg:
+        logs.add(type="chat_request", level="error", message="", error="消息不能为空")
+        return jsonify(error="消息不能为空"), 400
+    use_kb = body.get("use_kb", True)
+
+    start = time.time()
+    ret = index.retrieve(msg, settings.top_k) if use_kb else {"hits": [], "removed": 0}
+    context = ret["hits"]
+    logs.add(
+        type="retrieval",
+        message=msg[:60],
+        hits=len(context),
+        removed=ret["removed"],
+        mode=embedder.name,
+        top_score=round(context[0]["score"], 4) if context else 0,
+    )
+
+    user_prompt = msg
+    if context:
+        blocks = "\n\n".join(
+            f"【来自文档《{c['doc']}》{('· ' + c['heading']) if c.get('heading') else ''}】\n{c['text']}"
+            for c in context
+        )
+        user_prompt = f"参考资料：\n{blocks}\n\n问题：{msg}"
+
+    try:
+        answer, tokens_in, tokens_out = llm.chat(
+            [{"role": "user", "content": user_prompt}], system=SYSTEM_PROMPT
+        )
+    except Exception as e:
+        logs.add(type="chat_request", level="error", message=msg[:60], error=str(e)[:300])
+        return jsonify(error=f"模型调用失败: {e}"), 502
+
+    duration = (time.time() - start) * 1000
+    logs.add(
+        type="chat_request",
+        message=msg[:60],
+        hits=len(context),
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost=round(_cost(tokens_in, tokens_out), 6),
+        duration_ms=round(duration, 1),
+        model=getattr(llm, "model", llm.name),
+    )
+    return jsonify(answer=answer, sources=context)
+
+
+@app.post("/api/documents")
+def upload():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify(error="未选择文件"), 400
+    name = os.path.basename(f.filename)
+    raw = f.read()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("gbk")
+        except UnicodeDecodeError:
+            return jsonify(error="仅支持 UTF-8 / GBK 编码的文本文件(.txt/.md/.csv/.json/.log)"), 400
+    text = text.lstrip("\ufeff")  # 去掉 Windows 常见 BOM 头
+
+    dest = os.path.join(settings.upload_dir, name)
+    with open(dest, "wb") as fp:
+        fp.write(raw)
+
+    doc = index.add_document(name, dest, text, settings.chunk_size, settings.chunk_min_size)
+    logs.add(type="upload", name=name, chunks=len(doc["chunks"]), mode=embedder.name)
+    return jsonify(id=doc["id"], name=doc["name"], chunks=len(doc["chunks"]))
+
+
+@app.get("/api/documents")
+def documents():
+    return jsonify(documents=index.list())
+
+
+@app.delete("/api/documents/<doc_id>")
+def delete_document(doc_id: str):
+    doc = next((d for d in index.docs if d["id"] == doc_id), None)
+    if not index.remove(doc_id):
+        return jsonify(error="文档不存在"), 404
+    logs.add(type="delete", name=(doc or {}).get("name", doc_id))
+    return jsonify(ok=True)
+
+
+# ---------------- 运行监控 ----------------
+
+@app.get("/api/logs")
+def api_logs():
+    limit = min(int(request.args.get("limit", 100)), 500)
+    ftype = request.args.get("type") or None
+    return jsonify(logs=logs.recent(limit, ftype))
+
+
+@app.get("/api/stats")
+def api_stats():
+    return jsonify(logs.stats(settings.price_in, settings.price_out))
+
+
+@app.post("/api/logs/clear")
+def api_logs_clear():
+    logs.clear()
+    logs.add(type="system", message="日志已清空")
+    return jsonify(ok=True)
+
+
+# ---------------- 工具中心 ----------------
+
+@app.post("/api/tools/text/batch")
+def tool_text_batch():
+    body = request.get_json(silent=True) or {}
+    items = body.get("items") or []
+    if not items:
+        return jsonify(error="没有输入内容"), 400
+    if len(items) > 200:
+        return jsonify(error="单次最多 200 条"), 400
+    results = tool_mod.batch_text(
+        items,
+        body.get("mode", "rewrite"),
+        body.get("language", "英文"),
+        body.get("instruction", ""),
+        llm, logs, settings,
+    )
+    return jsonify(results=results)
+
+
+@app.post("/api/tools/image/generate")
+def tool_image_generate():
+    body = request.get_json(silent=True) or {}
+    prompts = body.get("prompts") or []
+    if not prompts:
+        return jsonify(error="没有输入提示词"), 400
+    if len(prompts) > 20:
+        return jsonify(error="单次最多 20 张"), 400
+    images = tool_mod.batch_images(prompts, body.get("size", "512x512"), settings, logs)
+    return jsonify(images=images, provider=settings.image_provider)
+
+
+@app.get("/api/tools/image/<name>")
+def tool_image_get(name: str):
+    return send_file(os.path.join(settings.data_dir, "output", name), mimetype="image/png")
+
+
+@app.post("/api/tools/table/preview")
+def tool_table_preview():
+    f = request.files.get("file")
+    if not f:
+        return jsonify(error="未选择文件"), 400
+    try:
+        info = tool_mod.preview_table(os.path.basename(f.filename or ""), f.read())
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(info)
+
+
+@app.post("/api/tools/table/process")
+def tool_table_process():
+    f = request.files.get("file")
+    if not f:
+        return jsonify(error="未选择文件"), 400
+    name = os.path.basename(f.filename or "")
+    raw = f.read()
+    column = (request.form.get("column") or "").strip()
+    mode = request.form.get("mode", "rewrite") or "rewrite"
+    language = request.form.get("language", "英文") or "英文"
+    instruction = request.form.get("instruction", "") or ""
+    try:
+        out_path, out_rows = tool_mod.process_table(
+            name, raw, column, mode, language, instruction, llm, logs, settings
+        )
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    except Exception as e:
+        return jsonify(error=f"处理失败: {e}"), 500
+    return jsonify(
+        download="/api/tools/download/" + os.path.basename(out_path),
+        rows=len(out_rows) - 1,
+        preview=out_rows[:5],
+    )
+
+
+@app.get("/api/tools/download/<name>")
+def tool_download(name: str):
+    return send_file(os.path.join(settings.data_dir, "output", name), as_attachment=True)
+
+
+if __name__ == "__main__":
+    app.run(host=settings.host, port=settings.port, threaded=True)
