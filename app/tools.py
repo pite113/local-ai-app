@@ -190,23 +190,30 @@ def preview_table(filename: str, raw: bytes):
     return {"columns": header, "preview": rows[:6], "total_rows": max(len(rows) - 1, 0)}
 
 
-def process_table(filename, raw, column, mode, language, instruction, llm, logs, settings):
+def process_table(filename, raw, columns, mode, language, instruction, llm, logs, settings):
+    """多列批量处理：每列生成一个"处理结果_列名"新列。columns 为列名列表。"""
     rows = _parse_table(filename, raw)
     if not rows:
         raise ValueError("表格为空")
     header = [str(c).strip() if c is not None else "" for c in rows[0]]
-    if column not in header:
-        raise ValueError(f"找不到列「{column}」，现有列：{'、'.join(header)}")
-    col_idx = header.index(column)
+    missing = [c for c in columns if c not in header]
+    if missing:
+        raise ValueError(f"找不到列「{'、'.join(missing)}」，现有列：{'、'.join(header)}")
+    col_idxs = [header.index(c) for c in columns]
 
-    items = []
-    for row in rows[1:]:
-        items.append(str(row[col_idx]).strip() if col_idx < len(row) and row[col_idx] is not None else "")
-    results = batch_text(items, mode, language, instruction, llm, logs, settings)
+    # 逐列收集待处理文本（跨列不去重，列内 batch_text 自动去重）
+    col_results = []
+    for ci in col_idxs:
+        items = [
+            str(r[ci]).strip() if ci < len(r) and r[ci] is not None else ""
+            for r in rows[1:]
+        ]
+        col_results.append(batch_text(items, mode, language, instruction, llm, logs, settings))
 
-    out_rows = [header + ["处理结果"]]
+    new_header = header + [f"处理结果_{c}" for c in columns]
+    out_rows = [new_header]
     for i, row in enumerate(rows[1:]):
-        out_rows.append(list(row) + [results[i] if i < len(results) else ""])
+        out_rows.append(list(row) + [col_results[j][i] for j in range(len(columns))])
 
     out_name = f"processed_{int(time.time())}_{os.path.basename(filename)}"
     out_path = os.path.join(settings.data_dir, "output", out_name)
@@ -221,6 +228,6 @@ def process_table(filename, raw, column, mode, language, instruction, llm, logs,
         for row in out_rows:
             ws.append(row)
         wb.save(out_path)
-    logs.add(type="tool_table", name=filename, column=column, mode=mode,
+    logs.add(type="tool_table", name=filename, columns=",".join(columns), mode=mode,
              rows=len(out_rows) - 1, level="info")
     return out_path, out_rows

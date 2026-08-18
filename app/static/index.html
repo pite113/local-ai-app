@@ -198,7 +198,8 @@
             <label id="tableFileInfo"></label>
           </div>
           <div class="tool-row">
-            <select id="tableCol" style="display:none;"></select>
+            <select id="tableCol" style="display:none;" multiple size="5"></select>
+            <label id="colHint" style="display:none;font-size:12px;color:#b2bec3;">按住 Ctrl 可多选列</label>
             <select id="tableMode">
               <option value="rewrite">✍️ 改写优化</option>
               <option value="translate">🌐 翻译</option>
@@ -485,19 +486,23 @@ async function parseTable() {
   tableColumns = j.columns || [];
   const sel = $('tableCol');
   sel.style.display = 'inline-block';
+  $('colHint').style.display = 'inline-block';
   sel.innerHTML = tableColumns.map(c => `<option value="${c}">${c}</option>`).join('');
   $('tableFileInfo').textContent = `${f.name} · ${j.total_rows} 行 · ${tableColumns.length} 列`;
   $('tableRun').disabled = false;
-  $('tableOut').innerHTML = '<div class="hint">表格解析成功。选择要处理的列，然后点"处理并下载"。</div>';
+  $('tableOut').innerHTML = '<div class="hint">表格解析成功。选择要处理的列（Ctrl 多选），然后点"处理并下载"。</div>';
   toast('解析成功');
 }
 
 async function processTable() {
   if (!tableFileObj) { toast('请先解析表格'); return; }
+  const sel = $('tableCol');
+  const cols = Array.from(sel.selectedOptions).map(o => o.value);
+  if (!cols.length) { toast('请先选择要处理的列'); return; }
   const btn = $('tableRun'); btn.disabled = true; btn.textContent = '处理中…';
   const fd = new FormData();
   fd.append('file', tableFileObj);
-  fd.append('column', $('tableCol').value);
+  fd.append('columns', cols.join(','));
   fd.append('mode', $('tableMode').value);
   fd.append('language', $('tableLang').value);
   fd.append('instruction', $('tableInst').value);

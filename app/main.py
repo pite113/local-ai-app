@@ -257,13 +257,16 @@ def tool_table_process():
         return jsonify(error="未选择文件"), 400
     name = os.path.basename(f.filename or "")
     raw = f.read()
-    column = (request.form.get("column") or "").strip()
+    cols_raw = (request.form.get("columns") or request.form.get("column") or "").strip()
+    columns = [c.strip() for c in cols_raw.split(",") if c.strip()]
+    if not columns:
+        return jsonify(error="未选择要处理的列"), 400
     mode = request.form.get("mode", "rewrite") or "rewrite"
     language = request.form.get("language", "英文") or "英文"
     instruction = request.form.get("instruction", "") or ""
     try:
         out_path, out_rows = tool_mod.process_table(
-            name, raw, column, mode, language, instruction, llm, logs, settings
+            name, raw, columns, mode, language, instruction, llm, logs, settings
         )
     except ValueError as e:
         return jsonify(error=str(e)), 400
