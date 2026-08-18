@@ -7,6 +7,7 @@ import csv
 import io
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 
@@ -26,41 +27,58 @@ def _build_prompt(mode: str, item: str, language: str, instruction: str) -> str:
     return f"请根据下面的要点生成一段完整、有吸引力的文案{ins}。只输出文案本身：\n{item}"
 
 
-def batch_text(items, mode, language, instruction, llm, logs: LogStore, settings: Settings):
-    """逐条调用模型处理，全部写入监控日志。"""
+def batch_text(items, mode, language, instruction, llm, logs: LogStore, settings: Settings,
+               concurrency: int = 3):
+    """批量处理：并发执行 + 相同内容自动去重（省 token），结果保持原顺序。"""
     system = (
         "你是一个专业的文案助手。严格按用户要求处理每一条文本，"
         "只输出处理结果本身，不要添加解释、编号、引号或多余换行。"
     )
-    results = []
-    for idx, item in enumerate(items):
-        item = (item or "").strip()
+
+    # 去重：相同 (mode, 内容) 只调用一次模型，结果映射回所有位置
+    unique_items, key_to_uidx = [], {}
+    for raw in items:
+        item = (raw or "").strip()
         if not item:
-            results.append("")
             continue
+        key = (mode, item)
+        if key not in key_to_uidx:
+            key_to_uidx[key] = len(unique_items)
+            unique_items.append(item)
+
+    def _process_one(uidx: int, item: str) -> str:
         prompt = _build_prompt(mode, item, language, instruction)
         start = time.time()
         try:
             answer, ti, to = llm.chat([{"role": "user", "content": prompt}], system=system)
             dur = (time.time() - start) * 1000
             logs.add(
-                type="tool_text",
-                mode=mode,
-                item_index=idx,
-                message=item[:40],
-                tokens_in=ti,
-                tokens_out=to,
+                type="tool_text", mode=mode, item_index=uidx, message=item[:40],
+                tokens_in=ti, tokens_out=to,
                 cost=round(ti / 1e6 * settings.price_in + to / 1e6 * settings.price_out, 6),
-                duration_ms=round(dur, 1),
-                level="info",
+                duration_ms=round(dur, 1), level="info",
             )
-            results.append(answer.strip())
+            return answer.strip()
         except Exception as e:
-            logs.add(
-                type="tool_text", mode=mode, item_index=idx, message=item[:40],
-                level="error", error=str(e)[:200],
-            )
-            results.append(f"[处理失败] {e}")
+            logs.add(type="tool_text", mode=mode, item_index=uidx, message=item[:40],
+                     level="error", error=str(e)[:200])
+            return f"[处理失败] {e}"
+
+    unique_results = [""] * len(unique_items)
+    workers = max(1, min(int(concurrency), len(unique_items) or 1))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(_process_one, i, it): i for i, it in enumerate(unique_items)}
+        for fut in as_completed(futures):
+            unique_results[futures[fut]] = fut.result()
+
+    # 映射回原顺序（含空行占位）
+    results = []
+    for raw in items:
+        item = (raw or "").strip()
+        if not item:
+            results.append("")
+        else:
+            results.append(unique_results[key_to_uidx[(mode, item)]])
     return results
 
 
@@ -68,10 +86,19 @@ def batch_text(items, mode, language, instruction, llm, logs: LogStore, settings
 
 def _mock_image(prompt: str, size: str, out_path: str):
     """无 API 时的占位图（用于测试流程），API 配置好后自动替换。"""
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
     w = {"512x512": 512, "1024x1024": 1024}.get(size, 512)
     img = Image.new("RGB", (w, w), (30, 144, 255))
     draw = ImageDraw.Draw(img)
+    # 用系统中文字体渲染，避免中文变方框
+    font = None
+    for fp in (r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\simhei.ttf", r"C:\Windows\Fonts\simsun.ttc"):
+        if os.path.exists(fp):
+            try:
+                font = ImageFont.truetype(fp, 22)
+                break
+            except Exception:
+                continue
     lines, cur = [], ""
     for ch in prompt:
         cur += ch
@@ -80,10 +107,10 @@ def _mock_image(prompt: str, size: str, out_path: str):
             cur = ""
     if cur:
         lines.append(cur)
-    y = w // 2 - min(len(lines), 10) * 12
+    y = w // 2 - min(len(lines), 10) * 26
     for ln in lines[:10]:
-        draw.text((20, y), ln, fill=(255, 255, 255))
-        y += 24
+        draw.text((20, y), ln, fill=(255, 255, 255), font=font)
+        y += 26
     img.save(out_path, "PNG")
 
 

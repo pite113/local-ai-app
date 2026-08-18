@@ -109,6 +109,7 @@
     <div id="messages"><div class="hint">你好！我是运行在你本地的 AI 助手。<br>右侧可以上传文档建立知识库，然后向我提问；数据全程保存在这台电脑上。</div></div>
     <div id="inputbar">
       <textarea id="input" placeholder="输入问题，回车发送…"></textarea>
+      <label style="font-size:13px;color:#636e72;white-space:nowrap;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="useKb" checked> 📚知识库</label>
       <button id="sendBtn">发送</button>
     </div>
   </section>
@@ -245,11 +246,16 @@ async function refreshStatus() {
 }
 
 /* ---------- 对话 ---------- */
+const CHAT_KEY = 'localAiChatHistory';
+
 function addMsg(role, text, sources) {
   const box = $('messages');
   const div = document.createElement('div');
   div.className = 'msg ' + (role === 'user' ? 'user' : 'ai');
-  div.textContent = text;
+  const txt = document.createElement('div');
+  txt.className = 'txt';
+  txt.textContent = text;
+  div.appendChild(txt);
   if (role === 'ai' && sources && sources.length) {
     const s = document.createElement('div');
     s.className = 'src';
@@ -258,6 +264,46 @@ function addMsg(role, text, sources) {
   }
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
+  saveChat();
+}
+
+function saveChat() {
+  try {
+    const items = [];
+    document.querySelectorAll('#messages .msg').forEach(el => {
+      const role = el.classList.contains('user') ? 'user' : 'ai';
+      const txt = el.querySelector('.txt');
+      const srcEl = el.querySelector('.src');
+      let sources = null;
+      if (srcEl) sources = Array.from(srcEl.querySelectorAll('b')).map(b => ({ doc: b.textContent.replace(/[《》]/g, '') }));
+      items.push({ role, text: txt ? txt.textContent : '', sources });
+    });
+    localStorage.setItem(CHAT_KEY, JSON.stringify(items.slice(-50)));
+  } catch (e) { /* 本地存储失败不影响使用 */ }
+}
+
+function restoreChat() {
+  try {
+    const items = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
+    if (!items.length) return;
+    $('messages').innerHTML = '';
+    items.forEach(it => {
+      const div = document.createElement('div');
+      div.className = 'msg ' + (it.role === 'user' ? 'user' : 'ai');
+      const txt = document.createElement('div');
+      txt.className = 'txt';
+      txt.textContent = it.text;
+      div.appendChild(txt);
+      if (it.role === 'ai' && it.sources && it.sources.length) {
+        const s = document.createElement('div');
+        s.className = 'src';
+        s.innerHTML = '📎 参考文档: ' + it.sources.map(x => `<b>《${x.doc}》</b>`).join('、');
+        div.appendChild(s);
+      }
+      $('messages').appendChild(div);
+    });
+    $('messages').scrollTop = $('messages').scrollHeight;
+  } catch (e) { /* 忽略损坏的历史 */ }
 }
 
 async function send() {
@@ -268,7 +314,7 @@ async function send() {
   try {
     const r = await fetch('/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg, use_kb: true })
+      body: JSON.stringify({ message: msg, use_kb: $('useKb').checked })
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || '请求失败');
@@ -471,7 +517,7 @@ async function processTable() {
 /* ---------- 事件绑定 ---------- */
 $('sendBtn').onclick = send;
 $('input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
-$('clearBtn').onclick = () => { $('messages').innerHTML = '<div class="hint">对话已清空</div>'; };
+$('clearBtn').onclick = () => { $('messages').innerHTML = '<div class="hint">对话已清空</div>'; try { localStorage.removeItem(CHAT_KEY); } catch (e) {} };
 $('drop').onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.txt,.md,.csv,.json,.log'; i.onchange = () => uploadFile(i.files[0]); i.click(); };
 $('drop').addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('over'); });
 $('drop').addEventListener('dragleave', () => $('drop').classList.remove('over'));
@@ -506,7 +552,7 @@ $('imgRun').onclick = runImgBatch;
 $('tableParse').onclick = parseTable;
 $('tableRun').onclick = processTable;
 
-refreshStatus(); loadDocs(); loadLogs();
+refreshStatus(); loadDocs(); loadLogs(); restoreChat();
 </script>
 </body>
 </html>

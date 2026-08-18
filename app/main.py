@@ -26,7 +26,10 @@ index = Index(
     lexical_threshold=settings.retrieve_lexical_threshold,
     dedup_threshold=settings.dedup_threshold,
 )
-logs = LogStore(os.path.join(settings.data_dir, "logs.jsonl"))
+logs = LogStore(
+    os.path.join(settings.data_dir, "logs.jsonl"),
+    max_mb=settings.log_max_mb,
+)
 llm = get_llm(settings)
 
 app = Flask(__name__)
@@ -123,13 +126,19 @@ def upload():
         return jsonify(error="未选择文件"), 400
     name = os.path.basename(f.filename)
     raw = f.read()
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
+    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    if ext in ("docx", "pdf"):
+        text = _extract_doc_text(ext, raw)
+        if not text:
+            return jsonify(error="无法从文件中提取文字（可能是扫描件/图片型 PDF）"), 400
+    else:
         try:
-            text = raw.decode("gbk")
+            text = raw.decode("utf-8")
         except UnicodeDecodeError:
-            return jsonify(error="仅支持 UTF-8 / GBK 编码的文本文件(.txt/.md/.csv/.json/.log)"), 400
+            try:
+                text = raw.decode("gbk")
+            except UnicodeDecodeError:
+                return jsonify(error="仅支持文本文件(.txt/.md/.csv/.json/.log)与 Word(.docx)/PDF"), 400
     text = text.lstrip("\ufeff")  # 去掉 Windows 常见 BOM 头
 
     dest = os.path.join(settings.upload_dir, name)
@@ -139,6 +148,21 @@ def upload():
     doc = index.add_document(name, dest, text, settings.chunk_size, settings.chunk_min_size)
     logs.add(type="upload", name=name, chunks=len(doc["chunks"]), mode=embedder.name)
     return jsonify(id=doc["id"], name=doc["name"], chunks=len(doc["chunks"]))
+
+
+def _extract_doc_text(ext: str, raw: bytes) -> str:
+    """从 Word/PDF 提取文字（docx 解析段落，pdf 逐页提取）。"""
+    try:
+        import io
+        if ext == "docx":
+            from docx import Document
+            doc = Document(io.BytesIO(raw))
+            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(raw))
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception:
+        return ""
 
 
 @app.get("/api/documents")
@@ -192,6 +216,7 @@ def tool_text_batch():
         body.get("language", "英文"),
         body.get("instruction", ""),
         llm, logs, settings,
+        concurrency=settings.tool_concurrency,
     )
     return jsonify(results=results)
 
