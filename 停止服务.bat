@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul
-echo æ­£åœ¨åœæ­¢æœ¬åœ°AIå·¥ä½œå°...
+echo ÕýÔÚÍ£Ö¹±¾µØAI¹¤×÷Ì¨...
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":8000" ^| findstr "LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
 echo.
-echo å·²åœæ­¢ã€‚
+echo ÒÑÍ£Ö¹¡£
 timeout /t 3 >nul

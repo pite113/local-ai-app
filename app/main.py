@@ -60,11 +60,13 @@ def _get_session_token():
 
 @app.before_request
 def require_auth():
-    """除登录接口与首页外，全部接口要求有效会话。"""
+    """除登录接口与首页外，全部接口要求有效会话；总开关关闭时全部拒绝。"""
     if request.path == "/" or request.path.startswith(_AUTH_EXEMPT_PREFIXES):
         return None
     if request.path.startswith("/api/health"):
         return None
+    if not auth.access_enabled():
+        return jsonify(error="演示已关闭，请联系管理员"), 403
     if not auth.check_session(_get_session_token()):
         return jsonify(error="未登录或会话已过期"), 401
 
@@ -93,7 +95,12 @@ def auth_login():
 
 @app.get("/api/auth/check")
 def auth_check():
-    return jsonify(ok=auth.check_session(_get_session_token()))
+    trial = auth.trial_seconds()
+    return jsonify(
+        ok=auth.check_session(_get_session_token()),
+        access_enabled=auth.access_enabled(),
+        trial_minutes=int(trial / 60) if trial else 0,
+    )
 
 
 @app.post("/api/auth/logout")

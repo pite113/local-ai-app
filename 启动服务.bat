@@ -3,7 +3,7 @@ chcp 65001 >nul
 cd /d %~dp0
 start "" ".venv\Scripts\pythonw.exe" run.py
 echo.
-echo æœ¬åœ°AIå·¥ä½œå°å·²å¯åŠ¨ (åŽå°è¿è¡Œ, æ— çª—å£)
-echo æµè§ˆå™¨è®¿é—®: http://127.0.0.1:8000
+echo ±¾µØAI¹¤×÷Ì¨ÒÑÆô¶¯ (ºóÌ¨ÔËÐÐ, ÎÞ´°¿Ú)
+echo ä¯ÀÀÆ÷·ÃÎÊ: http://127.0.0.1:8000
 echo.
 timeout /t 3 >nul

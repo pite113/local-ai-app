@@ -2,7 +2,12 @@
 
 流程：管理员点"发送验证码" → 生成6位一次性码并发到指定邮箱 → 把码告诉访客
      → 访客输入码登录（一次性，10分钟有效，5次错误作废）→ 建立会话。
+
+访问控制：
+- data/access.flag 内容 "on"/"off" —— 总开关，off 时所有人无法使用（秒级生效）
+- data/trial_minutes.flag 内容 数字 —— 访客体验时长（分钟），0=不限
 """
+import os
 import random
 import secrets
 import smtplib
@@ -77,11 +82,39 @@ class Auth:
             self._otp = None  # 一次性：用后即焚
             return True, None
 
+    # ---------- 访问控制（总开关 + 体验时长） ----------
+    def _read_flag(self, name: str, default: str) -> str:
+        """读取 data/ 下的标志文件；文件不存在时返回默认值。"""
+        try:
+            p = os.path.join(self.s.data_dir, name)
+            if os.path.exists(p):
+                with open(p, encoding="utf-8") as f:
+                    v = f.read().strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+        return default
+
+    def access_enabled(self) -> bool:
+        """总开关：data/access.flag = "off" 时全部关闭。"""
+        return self._read_flag("access.flag", "on") == "on"
+
+    def trial_seconds(self) -> int:
+        """体验时长（秒）；0 表示不限，用默认会话时长。"""
+        v = self._read_flag("trial_minutes.flag", "0")
+        try:
+            minutes = int(v)
+        except ValueError:
+            minutes = 0
+        return minutes * 60 if minutes > 0 else 0
+
     # ---------- 会话 ----------
     def create_session(self) -> str:
+        ttl = self.trial_seconds() or self.s.session_ttl_seconds
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._sessions[token] = time.time() + self.s.session_ttl_seconds
+            self._sessions[token] = time.time() + ttl
         return token
 
     def check_session(self, token: str) -> bool:
