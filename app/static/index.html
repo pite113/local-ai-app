@@ -148,6 +148,7 @@
   <button id="tabChat" class="active">💬 对话</button>
   <button id="tabMonitor">📊 运行监控</button>
   <button id="tabTools">🧰 工具</button>
+  <button id="tabAgent">🤖 Agent</button>
 </nav>
 <main>
   <!-- 对话视图 -->
@@ -256,6 +257,25 @@
             <button id="tableRun" disabled>🚀 处理并下载</button>
           </div>
           <div id="tableOut"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Agent 视图 -->
+  <section id="view-agent" class="view">
+    <div style="padding:16px 20px;overflow-y:auto;">
+      <div class="panel">
+        <h3>🤖 Agent 智能体（自主规划 · 自动执行 · 敏感操作拦截）</h3>
+        <div class="body">
+          <div class="tool-row"><textarea id="agentTask" placeholder="输入任务，例如：&#10;1. 在知识库搜索“退货”相关内容&#10;2. 把找到的内容改写成客服话术&#10;3. 生成一张客服配图"></textarea></div>
+          <div class="tool-row">
+            <button id="agentRun">🚀 执行任务</button>
+            <button class="sec" id="agentCancel" style="display:none;">✖ 取消</button>
+            <label id="agentStatus" style="color:#636e72;"></label>
+          </div>
+          <div id="agentSteps"></div>
+          <div id="agentResult"></div>
         </div>
       </div>
     </div>
@@ -509,7 +529,7 @@ async function reindexDocs() {
 }
 
 /* ---------- 运行监控 ---------- */
-const TYPE_LABEL = { chat_request: '对话', retrieval: '检索', upload: '上传', delete: '删除', system: '系统', tool_text: '工具·文本', tool_image: '工具·作图', tool_table: '工具·表格', other: '其他' };
+const TYPE_LABEL = { chat_request: '对话', retrieval: '检索', upload: '上传', delete: '删除', system: '系统', tool_text: '工具·文本', tool_image: '工具·作图', tool_table: '工具·表格', agent_run: 'Agent·任务', agent_step: 'Agent·步骤', other: '其他' };
 
 async function loadStats() {
   try {
@@ -674,6 +694,90 @@ async function processTable() {
   btn.disabled = false; btn.textContent = '🚀 处理并下载';
 }
 
+/* ---------- Agent ---------- */
+let agentRunId = null;
+
+async function runAgent() {
+  const task = $('agentTask').value.trim();
+  if (!task) { toast('请输入任务'); return; }
+  agentRunId = null;
+  $('agentSteps').innerHTML = '<div class="hint">🤖 Agent 正在思考并执行…</div>';
+  $('agentResult').innerHTML = '';
+  $('agentRun').disabled = true;
+  $('agentCancel').style.display = 'inline-block';
+  $('agentStatus').textContent = '运行中…';
+  try {
+    const r = await fetch('/api/agent/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '请求失败');
+    handleAgent(j);
+  } catch (e) {
+    $('agentSteps').innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`;
+  }
+  $('agentRun').disabled = false;
+  $('agentCancel').style.display = 'none';
+  $('agentStatus').textContent = '';
+}
+
+function handleAgent(j) {
+  if (j.error) {
+    $('agentSteps').innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${j.error}</div>`;
+    return;
+  }
+  agentRunId = j.run_id || null;
+  if (j.steps && j.steps.length) {
+    $('agentSteps').innerHTML = j.steps.map(s =>
+      `<div class="item">🛠 工具: <b>${s.tool}</b> ${s.approved ? '' : '(用户已拒绝)'} — ${s.summary} <small style="color:#b2bec3;">${s.time}</small></div>`
+    ).join('');
+  }
+  if (j.status === 'need_confirm') {
+    $('agentSteps').innerHTML += `<div class="item" style="background:#fff8e1;border-color:#f0c36d;margin-top:8px;">
+      ⚠️ <b>需要确认</b>：${j.reason}<br>
+      工具: <code>${j.tool}</code> · 参数: <code>${JSON.stringify(j.args)}</code><br>
+      <button onclick="confirmAgent(true)" style="padding:6px 16px;background:#00b894;color:#fff;border:none;border-radius:6px;cursor:pointer;margin-top:6px;">✅ 允许执行</button>
+      <button onclick="confirmAgent(false)" style="padding:6px 16px;background:#d63031;color:#fff;border:none;border-radius:6px;cursor:pointer;margin-top:6px;">🚫 拒绝</button>
+    </div>`;
+    $('agentStatus').textContent = '⏸ 等待确认…';
+    return;
+  }
+  if (j.status === 'done') {
+    $('agentResult').innerHTML = `<div class="tool-result">
+      <span class="ok">✅ 任务完成</span><br>
+      <div style="white-space:pre-wrap;margin-top:6px;">${(j.summary || '').replace(/</g, '&lt;')}</div>
+      <small style="color:#b2bec3;">消耗: 输入 ${j.usage.tokens_in} / 输出 ${j.usage.tokens_out} tokens · 估算成本 $${j.usage.cost}</small>
+    </div>`;
+  }
+}
+
+async function confirmAgent(approve) {
+  if (!agentRunId) return;
+  $('agentStatus').textContent = '处理中…';
+  try {
+    const r = await fetch('/api/agent/confirm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_id: agentRunId, approve })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '请求失败');
+    handleAgent(j);
+  } catch (e) {
+    $('agentStatus').textContent = '';
+    toast('⚠️ ' + e.message);
+  }
+}
+
+async function cancelAgent() {
+  if (agentRunId) await fetch('/api/agent/cancel', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ run_id: agentRunId })
+  });
+  agentRunId = null;
+  $('agentStatus').textContent = '已取消';
+}
+
 /* ---------- 事件绑定 ---------- */
 $('sendBtn').onclick = send;
 $('input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
@@ -687,8 +791,9 @@ $('reindexBtn').onclick = reindexDocs;
 $('tabChat').onclick = () => switchTab('chat');
 $('tabMonitor').onclick = () => switchTab('monitor');
 $('tabTools').onclick = () => switchTab('tools');
+$('tabAgent').onclick = () => switchTab('agent');
 function switchTab(which) {
-  ['chat', 'monitor', 'tools'].forEach(t => {
+  ['chat', 'monitor', 'tools', 'agent'].forEach(t => {
     $('tab' + t[0].toUpperCase() + t.slice(1)).classList.toggle('active', which === t);
     $('view-' + t).classList.toggle('active', which === t);
   });
@@ -712,6 +817,8 @@ $('txtDownload').onclick = () => downloadText('批量文本结果.txt', txtLastR
 $('imgRun').onclick = runImgBatch;
 $('tableParse').onclick = parseTable;
 $('tableRun').onclick = processTable;
+$('agentRun').onclick = runAgent;
+$('agentCancel').onclick = cancelAgent;
 
 $('sendCodeBtn').onclick = requestCode;
 $('loginBtn').onclick = doLogin;

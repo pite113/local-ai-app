@@ -45,6 +45,11 @@ class BaseLLM:
         """返回 (回复文本, 输入tokens, 输出tokens)。"""
         raise NotImplementedError
 
+    def chat_with_tools(self, messages, tools, system=None):
+        """带工具调用的对话。返回 (回复文本, tool_calls列表, 输入tokens, 输出tokens)。
+        tool_calls: [{"id","name","arguments(json字符串)"}]；无工具调用时为空列表。"""
+        raise NotImplementedError
+
 
 class MockLLM(BaseLLM):
     """演示模式：不需要任何模型/API，随时可跑。"""
@@ -60,6 +65,14 @@ class MockLLM(BaseLLM):
         )
         prompt = json.dumps(messages, ensure_ascii=False) + (system or "")
         return text, estimate_tokens(prompt), estimate_tokens(text)
+
+    def chat_with_tools(self, messages, tools, system=None):
+        text = (
+            "[演示模式] 当前是 mock 模型，不支持 Agent 工具调用。\n"
+            "请配置 LLM_PROVIDER=openai（DeepSeek）或 ollama 后使用 Agent 功能。"
+        )
+        prompt = json.dumps(messages, ensure_ascii=False) + (system or "")
+        return text, [], estimate_tokens(prompt), estimate_tokens(text)
 
 
 class OllamaLLM(BaseLLM):
@@ -83,6 +96,28 @@ class OllamaLLM(BaseLLM):
         )
         to = data.get("eval_count") or estimate_tokens(text)
         return text, ti, to
+
+    def chat_with_tools(self, messages, tools, system=None):
+        if system:
+            messages = [{"role": "system", "content": system}] + messages
+        payload = {"model": self.model, "messages": messages, "tools": tools, "stream": False}
+        r = _post_with_retry(f"{self.base}/api/chat", json=payload, timeout=300)
+        r.raise_for_status()
+        data = r.json()
+        msg = data["message"]
+        content = msg.get("content") or ""
+        tool_calls = []
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function", {})
+            args = fn.get("arguments", {})
+            tool_calls.append({
+                "id": "",
+                "name": fn.get("name", ""),
+                "arguments": json.dumps(args, ensure_ascii=False) if not isinstance(args, str) else args,
+            })
+        ti = data.get("prompt_eval_count") or estimate_tokens(json.dumps(messages, ensure_ascii=False))
+        to = data.get("eval_count") or estimate_tokens(content + json.dumps(tool_calls, ensure_ascii=False))
+        return content, tool_calls, ti, to
 
 
 class OpenAICompatLLM(BaseLLM):
@@ -111,6 +146,33 @@ class OpenAICompatLLM(BaseLLM):
         )
         to = usage.get("completion_tokens") or estimate_tokens(text)
         return text, ti, to
+
+    def chat_with_tools(self, messages, tools, system=None):
+        if system:
+            messages = [{"role": "system", "content": system}] + messages
+        headers = {"Authorization": f"Bearer {self.key}"}
+        payload = {"model": self.model, "messages": messages, "tools": tools, "tool_choice": "auto"}
+        r = _post_with_retry(
+            f"{self.base}/chat/completions", json=payload, headers=headers, timeout=300
+        )
+        r.raise_for_status()
+        data = r.json()
+        msg = data["choices"][0]["message"]
+        content = msg.get("content") or ""
+        tool_calls = []
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function", {})
+            tool_calls.append({
+                "id": tc.get("id", ""),
+                "name": fn.get("name", ""),
+                "arguments": fn.get("arguments") or "{}",
+            })
+        usage = data.get("usage") or {}
+        ti = usage.get("prompt_tokens") or estimate_tokens(json.dumps(messages, ensure_ascii=False))
+        to = usage.get("completion_tokens") or estimate_tokens(
+            content + json.dumps(tool_calls, ensure_ascii=False)
+        )
+        return content, tool_calls, ti, to
 
 
 def get_llm(s: Settings) -> BaseLLM:

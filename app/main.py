@@ -11,6 +11,7 @@ from .logger import LogStore
 from .rag import Index
 from . import tools as tool_mod
 from .auth import Auth
+from .agent import Agent
 
 settings = load_settings()
 # 统一转绝对路径：避免 Flask send_file 相对路径解析到 app/ 目录的坑
@@ -33,6 +34,7 @@ logs = LogStore(
 )
 llm = get_llm(settings)
 auth = Auth(settings, logs)
+agent = Agent(settings, llm, logs, index)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 单文件最大 20MB
@@ -289,6 +291,36 @@ def delete_document(doc_id: str):
     if not index.remove(doc_id):
         return jsonify(error="文档不存在"), 404
     logs.add(type="delete", name=(doc or {}).get("name", doc_id))
+    return jsonify(ok=True)
+
+
+# ---------------- Agent 智能体 ----------------
+
+@app.post("/api/agent/start")
+def agent_start():
+    body = request.get_json(silent=True) or {}
+    task = (body.get("task") or "").strip()
+    if not task:
+        return jsonify(error="任务不能为空"), 400
+    return jsonify(agent.start(task))
+
+
+@app.post("/api/agent/confirm")
+def agent_confirm():
+    body = request.get_json(silent=True) or {}
+    run_id = (body.get("run_id") or "").strip()
+    approve = bool(body.get("approve"))
+    if not run_id:
+        return jsonify(error="缺少 run_id"), 400
+    return jsonify(agent.confirm(run_id, approve))
+
+
+@app.post("/api/agent/cancel")
+def agent_cancel():
+    body = request.get_json(silent=True) or {}
+    run_id = (body.get("run_id") or "").strip()
+    if run_id:
+        agent.cancel(run_id)
     return jsonify(ok=True)
 
 

@@ -41,6 +41,7 @@ class Settings:
     # 工具与日志
     tool_concurrency: int = 3       # 批量文本并发数
     log_max_mb: float = 2.0         # 日志文件轮转上限(MB)
+    agent_max_iterations: int = 15  # Agent 单任务最大步数
     # 访问认证(OTP + 邮件)
     smtp_host: str = ""
     smtp_port: int = 465
@@ -108,6 +109,7 @@ def load_settings() -> Settings:
     s.image_api_model = os.environ.get("IMAGE_API_MODEL", s.image_api_model).strip()
     s.tool_concurrency = int(os.environ.get("TOOL_CONCURRENCY", str(s.tool_concurrency)))
     s.log_max_mb = float(os.environ.get("LOG_MAX_MB", str(s.log_max_mb)))
+    s.agent_max_iterations = int(os.environ.get("AGENT_MAX_ITERATIONS", str(s.agent_max_iterations)))
     s.smtp_host = os.environ.get("SMTP_HOST", s.smtp_host).strip()
     s.smtp_port = int(os.environ.get("SMTP_PORT", str(s.smtp_port)))
     s.smtp_user = os.environ.get("SMTP_USER", s.smtp_user).strip()
