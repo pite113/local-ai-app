@@ -149,6 +149,7 @@
   <button id="tabMonitor">📊 运行监控</button>
   <button id="tabTools">🧰 工具</button>
   <button id="tabAgent">🤖 Agent</button>
+  <button id="tabOrch">🧠 编排</button>
 </nav>
 <main>
   <!-- 对话视图 -->
@@ -276,6 +277,28 @@
           </div>
           <div id="agentSteps"></div>
           <div id="agentResult"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 编排视图 -->
+  <section id="view-orch" class="view">
+    <div style="padding:16px 20px;overflow-y:auto;">
+      <div class="panel">
+        <h3>🧠 编排器（多 Agent 分工流水线：文案 + 生图 + 表格 并行）</h3>
+        <div class="body">
+          <div class="tool-row">
+            <input type="file" id="orchFile" accept=".xlsx,.csv">
+            <label id="orchFileInfo"></label>
+          </div>
+          <div class="tool-row"><textarea id="orchTask" placeholder="描述批量任务，例如：&#10;把'标题'列改写成电商标题，并按商品名称逐行生成白底商品图"></textarea></div>
+          <div class="tool-row">
+            <button id="orchPlan">📋 生成作业单</button>
+            <label id="orchStatus" style="color:#636e72;"></label>
+          </div>
+          <div id="orchPlanBox"></div>
+          <div id="orchResult"></div>
         </div>
       </div>
     </div>
@@ -529,7 +552,7 @@ async function reindexDocs() {
 }
 
 /* ---------- 运行监控 ---------- */
-const TYPE_LABEL = { chat_request: '对话', retrieval: '检索', upload: '上传', delete: '删除', system: '系统', tool_text: '工具·文本', tool_image: '工具·作图', tool_table: '工具·表格', agent_run: 'Agent·任务', agent_step: 'Agent·步骤', other: '其他' };
+const TYPE_LABEL = { chat_request: '对话', retrieval: '检索', upload: '上传', delete: '删除', system: '系统', tool_text: '工具·文本', tool_image: '工具·作图', tool_table: '工具·表格', agent_run: 'Agent·任务', agent_step: 'Agent·步骤', orchestrator: '编排·流水线', other: '其他' };
 
 async function loadStats() {
   try {
@@ -778,6 +801,81 @@ async function cancelAgent() {
   $('agentStatus').textContent = '已取消';
 }
 
+/* ---------- 编排器 ---------- */
+let orchPlanId = null;
+let orchOrder = null;
+
+async function genOrchPlan() {
+  const f = $('orchFile').files[0];
+  const task = $('orchTask').value.trim();
+  if (!f) { toast('请选择表格文件'); return; }
+  if (!task) { toast('请描述任务'); return; }
+  orchPlanId = null; orchOrder = null;
+  $('orchPlanBox').innerHTML = '<div class="hint">🧠 编排器正在解析任务，生成作业单…</div>';
+  $('orchResult').innerHTML = '';
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('task', task);
+  const btn = $('orchPlan'); btn.disabled = true;
+  $('orchStatus').textContent = '解析中…';
+  try {
+    const r = await fetch('/api/orchestrator/plan', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '请求失败');
+    orchPlanId = j.plan_id; orchOrder = j.order;
+    $('orchFileInfo').textContent = `${f.name} · ${j.total_rows} 行 · 列: ${j.columns.join('、')}`;
+    const tc = (j.order.text_columns || []).map(x => `「${x.column}」(${x.mode}${x.language ? '→' + x.language : ''}${x.instruction ? '，' + x.instruction : ''})`).join('、') || '无';
+    let html = `<div class="tool-result">
+      <span class="ok">📋 作业单已生成</span><br>
+      表格: ${f.name}（${j.total_rows} 行）<br>
+      文案处理列: ${tc}<br>`;
+    if (j.order.images && j.order.images.enabled) {
+      const est = j.image_estimate;
+      html += `图片: <b>${est.count} 张</b>（模板: ${j.order.images.prompt_template}）<br>
+      <span style="color:#d63031;">⚠️ 生图将产生费用（约 ${est.approx}）</span><br>`;
+    }
+    html += `<div style="margin-top:8px;"><button onclick="runOrch(true)" style="padding:8px 20px;background:#0984e3;color:#fff;border:none;border-radius:6px;cursor:pointer;">🚀 执行</button>`;
+    if (j.order.images && j.order.images.enabled) {
+      html += ` <button onclick="runOrch(false)" style="padding:8px 20px;background:#636e72;color:#fff;border:none;border-radius:6px;cursor:pointer;">跳过生图执行</button>`;
+    }
+    html += '</div></div>';
+    $('orchPlanBox').innerHTML = html;
+    $('orchStatus').textContent = '作业单就绪，请确认后执行';
+  } catch (e) {
+    $('orchPlanBox').innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`;
+  }
+  btn.disabled = false;
+}
+
+async function runOrch(approveImages) {
+  if (!orchPlanId) return;
+  $('orchStatus').textContent = '🚀 三个 worker 并行执行中（文案/生图/表格）…';
+  $('orchResult').innerHTML = '<div class="hint">正在并行处理，请稍候…</div>';
+  try {
+    const r = await fetch('/api/orchestrator/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: orchPlanId, approve_images: approveImages })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '执行失败');
+    let html = `<div class="tool-result"><span class="ok">✅ 交付完成：共 ${j.rows} 行</span><br>
+      <a href="${j.download}" download>⬇️ 下载成品表格</a><br>
+      处理列: ${j.text_columns.join('、') || '无'} · 生成图片: ${j.images.length} 张</div>`;
+    if (j.images.length) {
+      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:8px;">' +
+        j.images.slice(0, 6).map(img =>
+          img.url ? `<div style="border:1px solid #dfe6e9;border-radius:6px;padding:4px;"><img src="${img.url}" style="width:100%;border-radius:4px;"><a href="${img.url}" download style="font-size:12px;">下载</a></div>`
+          : `<div style="font-size:12px;color:#d63031;">${img.error || '失败'}</div>`
+        ).join('') + '</div>';
+    }
+    $('orchResult').innerHTML = html;
+    $('orchStatus').textContent = '';
+  } catch (e) {
+    $('orchResult').innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`;
+    $('orchStatus').textContent = '';
+  }
+}
+
 /* ---------- 事件绑定 ---------- */
 $('sendBtn').onclick = send;
 $('input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
@@ -792,8 +890,9 @@ $('tabChat').onclick = () => switchTab('chat');
 $('tabMonitor').onclick = () => switchTab('monitor');
 $('tabTools').onclick = () => switchTab('tools');
 $('tabAgent').onclick = () => switchTab('agent');
+$('tabOrch').onclick = () => switchTab('orch');
 function switchTab(which) {
-  ['chat', 'monitor', 'tools', 'agent'].forEach(t => {
+  ['chat', 'monitor', 'tools', 'agent', 'orch'].forEach(t => {
     $('tab' + t[0].toUpperCase() + t.slice(1)).classList.toggle('active', which === t);
     $('view-' + t).classList.toggle('active', which === t);
   });
@@ -819,6 +918,7 @@ $('tableParse').onclick = parseTable;
 $('tableRun').onclick = processTable;
 $('agentRun').onclick = runAgent;
 $('agentCancel').onclick = cancelAgent;
+$('orchPlan').onclick = genOrchPlan;
 
 $('sendCodeBtn').onclick = requestCode;
 $('loginBtn').onclick = doLogin;

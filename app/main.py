@@ -12,6 +12,7 @@ from .rag import Index
 from . import tools as tool_mod
 from .auth import Auth
 from .agent import Agent
+from .orchestrator import Orchestrator
 
 settings = load_settings()
 # 统一转绝对路径：避免 Flask send_file 相对路径解析到 app/ 目录的坑
@@ -35,6 +36,7 @@ logs = LogStore(
 llm = get_llm(settings)
 auth = Auth(settings, logs)
 agent = Agent(settings, llm, logs, index)
+orchestrator = Orchestrator(settings, llm, logs)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 单文件最大 20MB
@@ -292,6 +294,61 @@ def delete_document(doc_id: str):
         return jsonify(error="文档不存在"), 404
     logs.add(type="delete", name=(doc or {}).get("name", doc_id))
     return jsonify(ok=True)
+
+
+# ---------------- 编排器（多Agent分工流水线） ----------------
+
+@app.post("/api/orchestrator/plan")
+def orchestrator_plan():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify(error="请上传表格文件(xlsx/csv)"), 400
+    task = (request.form.get("task") or "").strip()
+    if not task:
+        return jsonify(error="请描述任务"), 400
+    name = os.path.basename(f.filename)
+    if not name.lower().endswith((".xlsx", ".csv")):
+        return jsonify(error="仅支持 .xlsx / .csv"), 400
+    raw = f.read()
+    try:
+        info = tool_mod.preview_table(name, raw)
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    dest = os.path.join(settings.upload_dir, name)
+    with open(dest, "wb") as fp:
+        fp.write(raw)
+    try:
+        plan_id, order = orchestrator.plan(task, name, dest, info["columns"])
+    except Exception as e:
+        return jsonify(error=f"编排失败: {e}"), 500
+    # 预估生图费用提示
+    est = None
+    if order.get("images", {}).get("enabled"):
+        n = info["total_rows"]
+        est = {"count": n, "approx": f"约 ¥{round(n * 0.4, 1)}"}
+    return jsonify(
+        plan_id=plan_id,
+        order=order,
+        columns=info["columns"],
+        total_rows=info["total_rows"],
+        image_estimate=est,
+    )
+
+
+@app.post("/api/orchestrator/run")
+def orchestrator_run():
+    body = request.get_json(silent=True) or {}
+    plan_id = (body.get("plan_id") or "").strip()
+    approve_images = bool(body.get("approve_images"))
+    if not plan_id:
+        return jsonify(error="缺少 plan_id"), 400
+    try:
+        result = orchestrator.run(plan_id, approve_images)
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    except Exception as e:
+        return jsonify(error=f"执行失败: {e}"), 500
+    return jsonify(result)
 
 
 # ---------------- Agent 智能体 ----------------
