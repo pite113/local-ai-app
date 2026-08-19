@@ -22,14 +22,16 @@
 
 ### 接真实生图 API（②批量作图）
 
-注册生图服务（如硅基流动 https://siliconflow.cn），在 `.env` 配置：
+注册生图服务（如[硅基流动](https://siliconflow.cn)），在 `.env` 配置：
 
 ```ini
 IMAGE_PROVIDER=api
 IMAGE_API_BASE_URL=https://api.siliconflow.cn/v1
 IMAGE_API_KEY=sk-你的生图密钥
-IMAGE_API_MODEL=black-forest-labs/FLUX.1-schnell
+IMAGE_API_MODEL=Kwai-Kolors/Kolors
 ```
+
+> 模型名以平台"模型广场"当前可用为准（如 Kolors / Qwen-Image 等；FLUX.1 等部分模型已因备案下架）。
 
 ## 交付给客户
 

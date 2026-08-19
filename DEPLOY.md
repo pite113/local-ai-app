@@ -86,6 +86,17 @@ OLLAMA_MODEL=qwen2.5:3b
 ③ 验证: 浏览器打开 http://localhost:11434 有响应即可
 ```
 
+### 可选：批量作图接真实生图 API
+
+客户要用"②批量作图"出真图时，在 `.env` 加（模型名以硅基流动"模型广场"为准，FLUX.1/SD3.5 已下架）：
+
+```ini
+IMAGE_PROVIDER=api
+IMAGE_API_BASE_URL=https://api.siliconflow.cn/v1
+IMAGE_API_KEY=sk-客户的生图密钥
+IMAGE_API_MODEL=Kwai-Kolors/Kolors
+```
+
 ---
 
 ## 四、常见问题排查
