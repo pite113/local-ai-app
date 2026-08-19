@@ -259,6 +259,22 @@ let autoTimer = null;
 let tableColumns = [];
 let authed = false;
 
+/* 全局拦截：任意接口返回 403(演示已关闭) 时，立即切回登录页并提示 */
+(function () {
+  const origFetch = window.fetch;
+  window.fetch = async function (...args) {
+    const r = await origFetch.apply(this, args);
+    if (r.status === 403) {
+      authed = false;
+      $('loginMask').style.display = 'flex';
+      $('loginErr').textContent = '🔒 演示已关闭，请联系管理员';
+      $('sendCodeBtn').disabled = true;
+      $('loginBtn').disabled = true;
+    }
+    return r;
+  };
+})();
+
 /* ---------- 登录 ---------- */
 async function checkAuth() {
   try {

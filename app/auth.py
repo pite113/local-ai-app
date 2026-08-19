@@ -120,6 +120,8 @@ class Auth:
     def check_session(self, token: str) -> bool:
         if not token:
             return False
+        if not self.access_enabled():
+            return False  # 总开关关闭期间，所有会话一律无效；重新开启需重新登录
         with self._lock:
             exp = self._sessions.get(token)
             if exp and time.time() < exp:
