@@ -1,4 +1,4 @@
-# 一键打包交付包脚本
+﻿# 一键打包交付包脚本
 # 用法: 双击"一键打包.bat" 或运行  powershell -ExecutionPolicy Bypass -File pack.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
