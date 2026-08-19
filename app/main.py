@@ -196,6 +196,13 @@ def upload():
         text = _extract_doc_text(ext, raw)
         if not text:
             return jsonify(error="无法从文件中提取文字（可能是扫描件/图片型 PDF）"), 400
+    elif ext == "xlsx":
+        try:
+            text = _extract_xlsx_text(raw)
+        except Exception as e:
+            return jsonify(error=f"Excel 解析失败: {e}"), 400
+        if not text.strip():
+            return jsonify(error="Excel 中没有可读内容"), 400
     else:
         try:
             text = raw.decode("utf-8")
@@ -203,7 +210,7 @@ def upload():
             try:
                 text = raw.decode("gbk")
             except UnicodeDecodeError:
-                return jsonify(error="仅支持文本文件(.txt/.md/.csv/.json/.log)与 Word(.docx)/PDF"), 400
+                return jsonify(error="仅支持文本(.txt/.md/.csv/.json/.log)、Word(.docx)、PDF(.pdf)、Excel(.xlsx)"), 400
     text = text.lstrip("\ufeff")  # 去掉 Windows 常见 BOM 头
 
     dest = os.path.join(settings.upload_dir, name)
@@ -228,6 +235,30 @@ def _extract_doc_text(ext: str, raw: bytes) -> str:
         return "\n".join((page.extract_text() or "") for page in reader.pages)
     except Exception:
         return ""
+
+
+def _extract_xlsx_text(raw: bytes, max_rows_per_sheet: int = 1000) -> str:
+    """把 Excel 的【全部工作表】转成文本：工作表名作为标题，单元格用 | 分隔。
+
+    例：
+    # 工作表：中文目录
+    商品名称 | 价格 | 描述
+    夏季连衣裙 | 199 | 轻薄透气
+    """
+    import io
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    parts = []
+    for ws in wb.worksheets:
+        parts.append(f"# 工作表：{ws.title}")
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            if i >= max_rows_per_sheet:
+                parts.append("...(该表行数过多，已截断)")
+                break
+            cells = ["" if c is None else str(c).strip() for c in row]
+            parts.append(" | ".join(cells).rstrip(" |") + "；")  # 行尾加分号，避免切片时行粘连
+    wb.close()
+    return "\n".join(p for p in parts if p.strip())
 
 
 @app.get("/api/documents")

@@ -32,6 +32,9 @@ def _is_heading(line: str) -> bool:
     s = line.strip()
     if s.startswith("#"):
         return True
+    # 表格数据行（含 | 或 , 或 Tab 分隔）不算标题，避免表头/行被误判
+    if "|" in s or "," in s or "\t" in s:
+        return False
     # 短行且不以句末标点结尾，视为小标题
     return len(s) <= 30 and not re.search(r"[。！？!?；;]$", s)
 
@@ -164,6 +167,7 @@ class Index:
             "id": hashlib.md5((name + str(datetime.datetime.now())).encode()).hexdigest()[:12],
             "name": name,
             "source": source,
+            "text": text,          # 保留原文，重新切片时无需重读原件（兼容 docx/pdf/xlsx）
             "chunks": chunks,
             "added": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
             "format": self.FORMAT,
@@ -187,17 +191,19 @@ class Index:
         ]
 
     def reindex(self, chunk_size: int, min_size: int) -> int:
-        """按当前切片参数重新切片全部文档（从 data/uploads 原件重新读取）。"""
+        """按当前切片参数重新切片全部文档（优先用 doc 内保存的原文）。"""
         done = 0
         for d in self.docs:
-            src = d.get("source")
-            if not src or not os.path.exists(src):
-                continue
-            try:
-                with open(src, encoding="utf-8") as f:
-                    text = f.read()
-            except Exception:
-                continue
+            text = d.get("text")
+            if not text:
+                src = d.get("source")
+                if not src or not os.path.exists(src):
+                    continue
+                try:
+                    with open(src, encoding="utf-8") as f:
+                        text = f.read()
+                except Exception:
+                    continue
             text = text.lstrip("\ufeff")
             pairs = chunk_text(text, chunk_size, min_size)
             chunks = [{"text": t, "heading": h} for h, t in pairs]

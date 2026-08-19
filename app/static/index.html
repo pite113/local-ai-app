@@ -264,7 +264,7 @@
   <!-- 侧栏：知识库 -->
   <aside>
     <h2>📚 知识库 <button id="reindexBtn" title="按当前参数重新切片" style="float:right;background:none;border:1px solid #dfe6e9;border-radius:6px;font-size:12px;padding:2px 8px;cursor:pointer;color:#636e72;">🔄 重新切片</button></h2>
-    <div class="drop" id="drop">点击或拖拽文件到这里<br><small>支持 .txt / .md / .csv / .json / .log</small></div>
+    <div class="drop" id="drop">点击或拖拽文件到这里<br><small>支持 .txt/.md/.csv/.json/.log · Word(.docx) · PDF · Excel(.xlsx 多工作表)</small></div>
     <div id="docs"></div>
     <button id="clearBtn">🗑 清空对话</button>
   </aside>
@@ -678,7 +678,7 @@ async function processTable() {
 $('sendBtn').onclick = send;
 $('input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 $('clearBtn').onclick = () => { $('messages').innerHTML = '<div class="hint">对话已清空</div>'; try { localStorage.removeItem(CHAT_KEY); } catch (e) {} };
-$('drop').onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.txt,.md,.csv,.json,.log'; i.onchange = () => uploadFile(i.files[0]); i.click(); };
+$('drop').onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.accept = '.txt,.md,.csv,.json,.log,.docx,.pdf,.xlsx'; i.onchange = () => uploadFile(i.files[0]); i.click(); };
 $('drop').addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('over'); });
 $('drop').addEventListener('dragleave', () => $('drop').classList.remove('over'));
 $('drop').addEventListener('drop', e => { e.preventDefault(); $('drop').classList.remove('over'); uploadFile(e.dataTransfer.files[0]); });
