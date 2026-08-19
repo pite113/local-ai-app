@@ -1,4 +1,4 @@
-﻿# 一键打包交付包脚本
+# 一键打包交付包脚本
 # 用法: 双击"一键打包.bat" 或运行  powershell -ExecutionPolicy Bypass -File pack.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -18,6 +18,9 @@ New-Item -ItemType Directory -Force -Path $stage | Out-Null
 $items = @(
     'app', 'run.py', 'start.bat',
     '启动服务.bat', '停止服务.bat',
+    '关闭访问.bat', '开启访问.bat', '设置体验时长.bat',
+    '开启登录验证.bat', '关闭登录验证.bat',
+    'server_setup',
     'requirements.txt', 'README.md', 'DEPLOY.md',
     '.env.example', '.gitignore'
 )
