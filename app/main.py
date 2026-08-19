@@ -10,6 +10,7 @@ from .llm import get_llm
 from .logger import LogStore
 from .rag import Index
 from . import tools as tool_mod
+from .auth import Auth
 
 settings = load_settings()
 # 统一转绝对路径：避免 Flask send_file 相对路径解析到 app/ 目录的坑
@@ -31,6 +32,7 @@ logs = LogStore(
     max_mb=settings.log_max_mb,
 )
 llm = get_llm(settings)
+auth = Auth(settings, logs)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 单文件最大 20MB
@@ -45,6 +47,61 @@ SYSTEM_PROMPT = (
 
 def _cost(tokens_in: int, tokens_out: int) -> float:
     return tokens_in / 1e6 * settings.price_in + tokens_out / 1e6 * settings.price_out
+
+
+# ---------------- 访问认证 ----------------
+
+_AUTH_EXEMPT_PREFIXES = ("/api/auth",)
+
+
+def _get_session_token():
+    return request.cookies.get("session") or request.headers.get("X-Session", "")
+
+
+@app.before_request
+def require_auth():
+    """除登录接口与首页外，全部接口要求有效会话。"""
+    if request.path == "/" or request.path.startswith(_AUTH_EXEMPT_PREFIXES):
+        return None
+    if request.path.startswith("/api/health"):
+        return None
+    if not auth.check_session(_get_session_token()):
+        return jsonify(error="未登录或会话已过期"), 401
+
+
+@app.post("/api/auth/request")
+def auth_request():
+    result = auth.request_otp()
+    return jsonify(result)
+
+
+@app.post("/api/auth/login")
+def auth_login():
+    body = request.get_json(silent=True) or {}
+    code = body.get("code") or ""
+    ok, err = auth.verify_otp(code)
+    if not ok:
+        return jsonify(error=err), 401
+    token = auth.create_session()
+    resp = jsonify(ok=True)
+    resp.set_cookie(
+        "session", token,
+        httponly=True, max_age=settings.session_ttl_seconds, samesite="Lax",
+    )
+    return resp
+
+
+@app.get("/api/auth/check")
+def auth_check():
+    return jsonify(ok=auth.check_session(_get_session_token()))
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    auth.destroy_session(_get_session_token())
+    resp = jsonify(ok=True)
+    resp.delete_cookie("session")
+    return resp
 
 
 @app.get("/")

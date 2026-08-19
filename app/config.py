@@ -41,6 +41,17 @@ class Settings:
     # 工具与日志
     tool_concurrency: int = 3       # 批量文本并发数
     log_max_mb: float = 2.0         # 日志文件轮转上限(MB)
+    # 访问认证(OTP + 邮件)
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_pass: str = ""
+    mail_to: str = ""
+    otp_ttl_seconds: int = 600          # 验证码有效期 10 分钟
+    otp_max_attempts: int = 5           # 最多错误次数
+    otp_send_interval: int = 60         # 两次发送最小间隔(秒)
+    otp_max_per_hour: int = 5           # 每小时最多发送次数
+    session_ttl_seconds: int = 43200    # 会话有效期 12 小时
 
 
 def _load_dotenv(path: str = ".env") -> None:
@@ -96,4 +107,14 @@ def load_settings() -> Settings:
     s.image_api_model = os.environ.get("IMAGE_API_MODEL", s.image_api_model).strip()
     s.tool_concurrency = int(os.environ.get("TOOL_CONCURRENCY", str(s.tool_concurrency)))
     s.log_max_mb = float(os.environ.get("LOG_MAX_MB", str(s.log_max_mb)))
+    s.smtp_host = os.environ.get("SMTP_HOST", s.smtp_host).strip()
+    s.smtp_port = int(os.environ.get("SMTP_PORT", str(s.smtp_port)))
+    s.smtp_user = os.environ.get("SMTP_USER", s.smtp_user).strip()
+    s.smtp_pass = os.environ.get("SMTP_PASS", s.smtp_pass).strip()
+    s.mail_to = os.environ.get("MAIL_TO", s.mail_to).strip()
+    s.otp_ttl_seconds = int(os.environ.get("OTP_TTL_SECONDS", str(s.otp_ttl_seconds)))
+    s.otp_max_attempts = int(os.environ.get("OTP_MAX_ATTEMPTS", str(s.otp_max_attempts)))
+    s.otp_send_interval = int(os.environ.get("OTP_SEND_INTERVAL", str(s.otp_send_interval)))
+    s.otp_max_per_hour = int(os.environ.get("OTP_MAX_PER_HOUR", str(s.otp_max_per_hour)))
+    s.session_ttl_seconds = int(os.environ.get("SESSION_TTL_SECONDS", str(s.session_ttl_seconds)))
     return s

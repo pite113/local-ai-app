@@ -91,13 +91,40 @@
   .doc button { background: none; border: none; color: #d63031; cursor: pointer; font-size: 14px; }
   #clearBtn { margin: 10px 16px; padding: 8px; background: #fff; border: 1px solid #dfe6e9; border-radius: 6px; cursor: pointer; color: #636e72; }
   #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); background: #2d3436; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; display: none; z-index: 99; }
+  /* ---- 登录遮罩 ---- */
+  #loginMask { position: fixed; inset: 0; background: #2d3436; z-index: 999; display: flex; align-items: center; justify-content: center; }
+  #loginBox { background: #fff; border-radius: 14px; padding: 34px 40px; width: 380px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+  #loginBox h2 { font-size: 18px; margin-bottom: 6px; }
+  #loginBox p { font-size: 13px; color: #636e72; margin-bottom: 18px; }
+  #loginBox input { width: 100%; padding: 11px 14px; font-size: 18px; letter-spacing: 6px; text-align: center; border: 1px solid #dfe6e9; border-radius: 8px; margin-bottom: 12px; outline: none; }
+  #loginBox input:focus { border-color: #0984e3; }
+  #loginBox .row { display: flex; gap: 8px; }
+  #loginBox button { flex: 1; padding: 11px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  #loginBtn { background: #0984e3; color: #fff; }
+  #sendCodeBtn { background: #fff; color: #0984e3; border: 1px solid #0984e3 !important; }
+  #loginErr { color: #d63031; font-size: 13px; min-height: 18px; margin-top: 10px; }
+  #logoutBtn { display: none; background: none; border: 1px solid #636e72; color: #b2bec3; border-radius: 12px; padding: 3px 12px; font-size: 12px; cursor: pointer; margin-left: 8px; }
 </style>
 </head>
 <body>
 <header>
   <h1>🤖 本地 AI 工作台</h1>
-  <div><span class="badge" id="statusBadge">连接中…</span></div>
+  <div><button id="logoutBtn" title="退出登录">退出</button><span class="badge" id="statusBadge">连接中…</span></div>
 </header>
+
+<!-- 登录遮罩 -->
+<div id="loginMask" style="display:none;">
+  <div id="loginBox">
+    <h2>🔐 访问验证</h2>
+    <p>本系统需要访问验证码。请向管理员获取验证码，或点击下方按钮发送到管理员邮箱。</p>
+    <input id="loginCode" type="text" maxlength="6" placeholder="6位验证码" autocomplete="one-time-code">
+    <div class="row">
+      <button id="sendCodeBtn">📧 发送验证码到邮箱</button>
+      <button id="loginBtn">登录</button>
+    </div>
+    <div id="loginErr"></div>
+  </div>
+</div>
 <nav>
   <button id="tabChat" class="active">💬 对话</button>
   <button id="tabMonitor">📊 运行监控</button>
@@ -230,6 +257,57 @@ const $ = id => document.getElementById(id);
 let docs = [];
 let autoTimer = null;
 let tableColumns = [];
+let authed = false;
+
+/* ---------- 登录 ---------- */
+async function checkAuth() {
+  try {
+    const r = await fetch('/api/auth/check');
+    const j = await r.json();
+    authed = !!(j && j.ok);
+  } catch (e) { authed = false; }
+  $('loginMask').style.display = authed ? 'none' : 'flex';
+  $('logoutBtn').style.display = authed ? 'inline-block' : 'none';
+  return authed;
+}
+
+async function requestCode() {
+  const btn = $('sendCodeBtn'); btn.disabled = true;
+  $('loginErr').textContent = '正在发送…';
+  try {
+    const r = await fetch('/api/auth/request', { method: 'POST' });
+    const j = await r.json();
+    if (j.sent) {
+      $('loginErr').textContent = j.warning ? '⚠️ ' + j.warning + '（验证码: ' + j.debug_code + '）' : '✅ 验证码已发送到管理员邮箱，请查收';
+    } else {
+      $('loginErr').textContent = '⚠️ ' + (j.error || '发送失败');
+    }
+  } catch (e) { $('loginErr').textContent = '⚠️ 请求失败'; }
+  setTimeout(() => { btn.disabled = false; }, 3000);
+}
+
+async function doLogin() {
+  const code = $('loginCode').value.trim();
+  if (!code) { $('loginErr').textContent = '请输入验证码'; return; }
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const j = await r.json();
+    if (!r.ok) { $('loginErr').textContent = '⚠️ ' + (j.error || '登录失败'); return; }
+    $('loginErr').textContent = '';
+    authed = true;
+    $('loginMask').style.display = 'none';
+    $('logoutBtn').style.display = 'inline-block';
+    location.reload();
+  } catch (e) { $('loginErr').textContent = '⚠️ 请求失败'; }
+}
+
+async function doLogout() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  location.reload();
+}
 
 function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.style.display = 'block';
@@ -557,7 +635,12 @@ $('imgRun').onclick = runImgBatch;
 $('tableParse').onclick = parseTable;
 $('tableRun').onclick = processTable;
 
-refreshStatus(); loadDocs(); loadLogs(); restoreChat();
+$('sendCodeBtn').onclick = requestCode;
+$('loginBtn').onclick = doLogin;
+$('loginCode').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+$('logoutBtn').onclick = doLogout;
+
+checkAuth().then(ok => { if (ok) { refreshStatus(); loadDocs(); loadLogs(); restoreChat(); } });
 </script>
 </body>
 </html>
