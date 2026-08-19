@@ -72,9 +72,12 @@ class Auth:
         if self.s.smtp_host:
             self.logs.add(type="auth", level="error", error=f"邮件发送失败: {err}")
             return {"sent": False, "error": f"邮件发送失败: {err}"}
-        # 未配置 SMTP：调试模式直接把码返回（仅限本机测试）
-        self.logs.add(type="auth", message="SMTP未配置, 验证码以调试模式展示", level="warn")
-        return {"sent": True, "debug_code": code, "warning": "SMTP 未配置，验证码显示在此（正式使用请配置邮箱）"}
+        # 未配置 SMTP：仅当显式开启调试模式(OTP_DEBUG=true)才返回验证码，否则拒绝发送
+        if self.s.otp_debug:
+            self.logs.add(type="auth", message="SMTP未配置, 调试模式返回验证码", level="warn")
+            return {"sent": True, "debug_code": code, "warning": "调试模式：验证码直接显示（正式使用请配置邮箱并关闭OTP_DEBUG）"}
+        self.logs.add(type="auth", level="error", error="SMTP未配置，无法发送验证码")
+        return {"sent": False, "error": "邮件服务未配置，无法发送验证码"}
 
     def verify_otp(self, code: str) -> tuple:
         """校验验证码。返回 (成功?, 错误信息)。一次性：无论对错都作废/计数。"""

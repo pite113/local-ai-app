@@ -2,6 +2,7 @@
 import os
 import time
 import uuid
+from functools import wraps
 
 from flask import Flask, jsonify, request, send_file
 
@@ -74,6 +75,23 @@ def _as_bool(v, default: bool = False) -> bool:
     if isinstance(v, str):
         return v.strip().lower() in ("true", "1", "yes", "on")
     return default
+
+
+def require_role(*roles):
+    """后端角色校验：未启用登录验证=本地可信模式全部放行；启用后按角色拦截。"""
+    def deco(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not auth.auth_enabled():
+                return fn(*args, **kwargs)
+            token = _get_session_token()
+            if not auth.check_session(token):
+                return jsonify(error="未登录或会话已过期"), 401
+            if auth.get_role(token) not in roles:
+                return jsonify(error="无权限执行此操作"), 403
+            return fn(*args, **kwargs)
+        return wrapper
+    return deco
 
 
 # ---------------- 访问认证 ----------------
@@ -339,6 +357,7 @@ def document_detail(doc_id: str):
 
 
 @app.post("/api/documents/reindex")
+@require_role("admin", "tech")
 def reindex_documents():
     """按当前 .env 切片参数重新切片全部文档（从原件重读）。"""
     n = index.reindex(settings.chunk_size, settings.chunk_min_size)
@@ -347,6 +366,7 @@ def reindex_documents():
 
 
 @app.delete("/api/documents/<doc_id>")
+@require_role("admin")
 def delete_document(doc_id: str):
     doc = next((d for d in index.docs if d["id"] == doc_id), None)
     if not index.remove(doc_id):
@@ -487,7 +507,7 @@ def agent_start():
 def agent_confirm():
     body = request.get_json(silent=True) or {}
     run_id = (body.get("run_id") or "").strip()
-    approve = bool(body.get("approve"))
+    approve = _as_bool(body.get("approve"))
     if not run_id:
         return jsonify(error="缺少 run_id"), 400
     return jsonify(agent.confirm(run_id, approve))
@@ -505,6 +525,7 @@ def agent_cancel():
 # ---------------- 运行监控 ----------------
 
 @app.get("/api/logs")
+@require_role("admin", "tech")
 def api_logs():
     limit = min(int(request.args.get("limit", 100)), 500)
     ftype = request.args.get("type") or None
@@ -512,11 +533,13 @@ def api_logs():
 
 
 @app.get("/api/stats")
+@require_role("admin")
 def api_stats():
     return jsonify(logs.stats(settings.price_in, settings.price_out))
 
 
 @app.post("/api/logs/clear")
+@require_role("admin")
 def api_logs_clear():
     logs.clear()
     logs.add(type="system", message="日志已清空")

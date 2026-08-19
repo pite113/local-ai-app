@@ -741,8 +741,8 @@ async function runImgBatch() {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || '生成失败');
     box.innerHTML = j.images.map(img => {
-      if (img.error) return `<div class="cell">❌ ${img.error}</div>`;
-      return `<div class="cell"><img src="${img.url}"><div>${img.prompt}</div><a href="${img.url}" download>⬇️ 下载</a></div>`;
+      if (img.error) return `<div class="cell">❌ ${esc(img.error)}</div>`;
+      return `<div class="cell"><img src="${esc(img.url)}"><div>${esc(img.prompt)}</div><a href="${esc(img.url)}" download>⬇️ 下载</a></div>`;
     }).join('');
     toast('生成完成');
   } catch (e) { box.innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`; }
@@ -831,7 +831,7 @@ function handleAgent(j) {
   agentRunId = j.run_id || null;
   if (j.steps && j.steps.length) {
     $('agentSteps').innerHTML = j.steps.map(s =>
-      `<div class="item">🛠 工具: <b>${s.tool}</b> ${s.approved ? '' : '(用户已拒绝)'} — ${s.summary} <small style="color:#b2bec3;">${s.time}</small></div>`
+      `<div class="item">🛠 工具: <b>${esc(s.tool)}</b> ${s.approved ? '' : '(用户已拒绝)'} — ${esc(s.summary)} <small style="color:#b2bec3;">${esc(s.time)}</small></div>`
     ).join('');
   }
   if (j.status === 'need_confirm') {
@@ -902,15 +902,15 @@ async function genOrchPlan() {
     if (!r.ok) throw new Error(j.error || '请求失败');
     orchPlanId = j.plan_id; orchOrder = j.order;
     $('orchFileInfo').textContent = `${f.name} · ${j.total_rows} 行 · 列: ${j.columns.join('、')}`;
-    const tc = (j.order.text_columns || []).map(x => `「${x.column}」(${x.mode}${x.language ? '→' + x.language : ''}${x.instruction ? '，' + x.instruction : ''})`).join('、') || '无';
+    const tc = (j.order.text_columns || []).map(x => `「${esc(x.column)}」(${esc(x.mode)}${x.language ? '→' + esc(x.language) : ''}${x.instruction ? '，' + esc(x.instruction) : ''})`).join('、') || '无';
     let html = `<div class="tool-result">
       <span class="ok">📋 作业单已生成</span><br>
-      表格: ${f.name}（${j.total_rows} 行）<br>
+      表格: ${esc(f.name)}（${j.total_rows} 行）<br>
       文案处理列: ${tc}<br>`;
     if (j.order.images && j.order.images.enabled) {
       const est = j.image_estimate;
-      html += `图片: <b>${est.count} 张</b>（模板: ${j.order.images.prompt_template}）<br>
-      <span style="color:#d63031;">⚠️ 生图将产生费用（约 ${est.approx}）</span><br>`;
+      html += `图片: <b>${est.count} 张</b>（模板: ${esc(j.order.images.prompt_template)}）<br>
+      <span style="color:#d63031;">⚠️ 生图将产生费用（约 ${esc(est.approx)}）</span><br>`;
     }
     html += `<div style="margin-top:8px;"><button onclick="runOrch(true)" style="padding:8px 20px;background:#0984e3;color:#fff;border:none;border-radius:6px;cursor:pointer;">🚀 执行</button>`;
     if (j.order.images && j.order.images.enabled) {
@@ -942,8 +942,8 @@ async function runOrch(approveImages) {
     if (j.images.length) {
       html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-top:8px;">' +
         j.images.slice(0, 6).map(img =>
-          img.url ? `<div style="border:1px solid #dfe6e9;border-radius:6px;padding:4px;"><img src="${img.url}" style="width:100%;border-radius:4px;"><a href="${img.url}" download style="font-size:12px;">下载</a></div>`
-          : `<div style="font-size:12px;color:#d63031;">${img.error || '失败'}</div>`
+          img.url ? `<div style="border:1px solid #dfe6e9;border-radius:6px;padding:4px;"><img src="${esc(img.url)}" style="width:100%;border-radius:4px;"><a href="${esc(img.url)}" download style="font-size:12px;">下载</a></div>`
+          : `<div style="font-size:12px;color:#d63031;">${esc(img.error || '失败')}</div>`
         ).join('') + '</div>';
     }
     $('orchResult').innerHTML = html;

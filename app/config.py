@@ -60,6 +60,7 @@ class Settings:
     otp_max_attempts: int = 5           # 最多错误次数
     otp_send_interval: int = 60         # 两次发送最小间隔(秒)
     otp_max_per_hour: int = 5           # 每小时最多发送次数
+    otp_debug: bool = False             # true=未配SMTP时在响应中返回验证码(仅本地开发用)
     session_ttl_seconds: int = 43200    # 会话有效期 12 小时
 
 
@@ -133,5 +134,6 @@ def load_settings() -> Settings:
     s.otp_max_attempts = int(os.environ.get("OTP_MAX_ATTEMPTS", str(s.otp_max_attempts)))
     s.otp_send_interval = int(os.environ.get("OTP_SEND_INTERVAL", str(s.otp_send_interval)))
     s.otp_max_per_hour = int(os.environ.get("OTP_MAX_PER_HOUR", str(s.otp_max_per_hour)))
+    s.otp_debug = os.environ.get("OTP_DEBUG", str(s.otp_debug)).strip().lower() in ("true", "1", "yes", "on")
     s.session_ttl_seconds = int(os.environ.get("SESSION_TTL_SECONDS", str(s.session_ttl_seconds)))
     return s

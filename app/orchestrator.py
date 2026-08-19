@@ -89,7 +89,7 @@ class Orchestrator:
         if not tool_calls:
             raise ValueError("编排器未能生成作业单，请换个说法描述任务")
         order = json.loads(tool_calls[0]["arguments"] or "{}")
-        plan_id = f"plan_{int(time.time())}_{self._seq}"
+        plan_id = f"plan_{uuid.uuid4().hex[:12]}"
         self._seq += 1
         with self._lock:
             self.plans[plan_id] = {
@@ -109,14 +109,12 @@ class Orchestrator:
                     self.plans.pop(pid, None)
 
     def run(self, plan_id: str, approve_images: bool):
-        """执行作业单：文案/生图/表格 worker 并行，装配交付。"""
+        """执行作业单：文案/生图/表格 worker 并行，装配交付。作业单一次性消费，防重复执行。"""
         with self._lock:
-            plan = self.plans.get(plan_id)
+            plan = self.plans.pop(plan_id, None)  # 原子取出并消费
         if plan is None:
-            raise ValueError("作业单不存在或已过期（10分钟内需执行，请重新生成）")
+            raise ValueError("作业单不存在、已过期或已执行（请重新生成）")
         if time.time() - plan["created"] > PLAN_TTL:
-            with self._lock:
-                self.plans.pop(plan_id, None)
             raise ValueError("作业单已过期（10分钟），请重新生成")
         order = plan["order"]
         with open(plan["raw_path"], "rb") as f:

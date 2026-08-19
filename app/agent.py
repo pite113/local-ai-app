@@ -7,6 +7,7 @@
 import json
 import threading
 import time
+import uuid
 
 from .config import Settings
 from .llm import BaseLLM
@@ -103,7 +104,7 @@ class Agent:
         """开始一个任务。返回 {status: running|done|need_confirm, ...}"""
         if not (task or "").strip():
             return {"error": "任务不能为空"}
-        run_id = f"run_{int(time.time())}_{self._seq}"
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
         self._seq += 1
         state = {
             "run_id": run_id,
@@ -129,6 +130,9 @@ class Agent:
             return {"error": "任务不存在或已过期"}
         if state["status"] != "await_confirm":
             return {"error": "当前任务不需要确认"}
+        if time.time() - state.get("created", 0) > PENDING_TIMEOUT:
+            state["status"] = "done"
+            return {"error": "确认超时（10分钟），任务已终止，请重新发起"}
         pending = state.pop("pending", None)
         if pending is None:
             state["status"] = "done"
@@ -187,21 +191,30 @@ class Agent:
 
         assistant_msg = {"role": "assistant", "content": content}
         if tool_calls:
-            assistant_msg["tool_calls"] = [
+            # 统一规范化 call_id：assistant 消息、执行队列、tool 回传三处用同一 ID
+            norm_calls = [
                 {
                     "id": tc["id"] or f"call_{i}",
-                    "type": "function",
-                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                    "name": tc["name"],
+                    "arguments": tc["arguments"],
                 }
                 for i, tc in enumerate(tool_calls)
+            ]
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": nc["id"],
+                    "type": "function",
+                    "function": {"name": nc["name"], "arguments": nc["arguments"]},
+                }
+                for nc in norm_calls
             ]
         state["messages"].append(assistant_msg)
 
         if not tool_calls:
             return self._finish(state, content)
 
-        # 逐个执行全部工具调用，每个都回传对应 call_id 的结果（修复只执行第一个的问题）
-        state["tool_queue"] = list(tool_calls)
+        # 逐个执行全部工具调用，每个都回传对应 call_id 的结果
+        state["tool_queue"] = [dict(nc) for nc in norm_calls]
         return self._process_queue(run_id)
 
     def _process_queue(self, run_id: str):
