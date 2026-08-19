@@ -115,12 +115,18 @@ class Auth:
         return minutes * 60 if minutes > 0 else 0
 
     # ---------- 会话 ----------
-    def create_session(self) -> str:
+    def create_session(self, role: str = "client") -> str:
+        """创建会话。role: admin(管理层) / tech(技术层) / client(使用层)。"""
         ttl = self.trial_seconds() or self.s.session_ttl_seconds
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._sessions[token] = time.time() + ttl
+            self._sessions[token] = {"exp": time.time() + ttl, "role": role}
         return token
+
+    def get_role(self, token: str) -> str:
+        with self._lock:
+            s = self._sessions.get(token)
+            return s["role"] if s else "guest"
 
     def check_session(self, token: str) -> bool:
         if not token:
@@ -128,8 +134,8 @@ class Auth:
         if not self.access_enabled():
             return False  # 总开关关闭期间，所有会话一律无效；重新开启需重新登录
         with self._lock:
-            exp = self._sessions.get(token)
-            if exp and time.time() < exp:
+            s = self._sessions.get(token)
+            if s and time.time() < s["exp"]:
                 return True
             self._sessions.pop(token, None)
             return False

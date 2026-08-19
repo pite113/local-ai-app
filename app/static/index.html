@@ -141,7 +141,7 @@
       <button id="sendCodeBtn" style="display:none;">📧 发送验证码到邮箱</button>
       <button id="loginBtn">登录</button>
     </div>
-    <div style="margin-top:10px;"><a id="adminLink" style="font-size:12px;color:#0984e3;cursor:pointer;">管理员入口</a></div>
+    <div style="margin-top:10px;"><a id="adminLink" style="font-size:12px;color:#0984e3;cursor:pointer;">管理员入口</a> · <a id="techLink" style="font-size:12px;color:#0984e3;cursor:pointer;">技术入口</a></div>
     <div id="loginErr"></div>
   </div>
 </div>
@@ -339,6 +339,19 @@ let docs = [];
 let autoTimer = null;
 let tableColumns = [];
 let authed = false;
+let userRole = 'guest';   // admin(管理层) / tech(技术层) / client(使用层)
+
+/* 按角色渲染界面：管理层全视角 / 技术层无成本 / 使用层仅使用入口 */
+function applyRoleUI(role) {
+  const isClient = role === 'client';
+  const isTech = role === 'tech';
+  // 使用层：隐藏"运行监控"页签、知识库管理控件(上传/重切/删除)
+  $('tabMonitor').style.display = (isClient) ? 'none' : 'inline-block';
+  $('drop').style.display = isClient ? 'none' : 'block';
+  $('reindexBtn').style.display = isClient ? 'none' : 'inline-block';
+  // 技术层/使用层：顶部不显示成本(由 loadStats 处理成本卡片)
+  if (isClient && $('tabMonitor').classList.contains('active')) switchTab('chat');
+}
 
 /* 全局拦截：任意接口返回 403(演示已关闭) 时，立即切回登录页并提示 */
 (function () {
@@ -369,6 +382,8 @@ async function checkAuth() {
       return true;
     }
     authed = !!(j && j.ok);
+    userRole = (j && j.role) || 'guest';
+    if (authed) applyRoleUI(userRole);
     if (j && !j.access_enabled) {
       $('loginErr').textContent = '🔒 演示已关闭，请联系管理员';
       $('sendCodeBtn').disabled = true;
@@ -413,6 +428,20 @@ function unlockAdmin() {
   localStorage.setItem('adminKey', k.trim());
   $('sendCodeBtn').style.display = 'inline-block';
   $('loginErr').textContent = '验证码按钮已解锁，点击发送';
+}
+
+async function loginKey(role) {
+  const k = prompt(role === 'admin' ? '请输入管理层口令：' : '请输入技术层口令：');
+  if (!k) return;
+  try {
+    const r = await fetch('/api/auth/login_key', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: k.trim(), role })
+    });
+    const j = await r.json();
+    if (!r.ok) { $('loginErr').textContent = '⚠️ ' + (j.error || '口令错误'); return; }
+    location.reload();
+  } catch (e) { $('loginErr').textContent = '⚠️ 请求失败'; }
 }
 
 async function doLogin() {
@@ -539,12 +568,15 @@ async function loadDocs() {
   box.innerHTML = docs.length ? '' : '<div class="hint">还没有文档，先上传一个吧</div>';
   docs.forEach(d => {
     const row = document.createElement('div'); row.className = 'doc';
-    row.innerHTML = `<div class="meta"><span>📄 ${d.name}</span><small>${d.chunks} 段 · ${d.added}</small></div><div style="display:flex;gap:8px;"><button title="查看切片" style="color:#0984e3;">📖</button><button title="删除" style="color:#d63031;">✕</button></div>`;
+    const delBtn = userRole === 'client' ? '' : '<button title="删除" style="color:#d63031;">✕</button>';
+    row.innerHTML = `<div class="meta"><span>📄 ${d.name}</span><small>${d.chunks} 段 · ${d.added}</small></div><div style="display:flex;gap:8px;"><button title="查看切片" style="color:#0984e3;">📖</button>${delBtn}</div>`;
     row.querySelectorAll('button')[0].onclick = () => showChunks(d.id, d.name);
-    row.querySelectorAll('button')[1].onclick = async () => {
-      await fetch('/api/documents/' + d.id, { method: 'DELETE' });
-      loadDocs(); refreshStatus();
-    };
+    if (userRole !== 'client') {
+      row.querySelectorAll('button')[1].onclick = async () => {
+        await fetch('/api/documents/' + d.id, { method: 'DELETE' });
+        loadDocs(); refreshStatus();
+      };
+    }
     box.appendChild(row);
   });
 }
@@ -601,7 +633,7 @@ async function loadStats() {
       { num: '$' + s.est_cost, lbl: `估算成本(输入 $${s.price_in}/M)` },
       { num: s.errors, lbl: '错误次数', warn: s.errors > 0 },
       { num: s.avg_duration_ms, lbl: '平均耗时(ms)' },
-    ];
+    ].filter(c => !(userRole === 'tech' && c.lbl.includes('成本')));  // 技术层不见成本
     $('cards').innerHTML = cards.map(c =>
       `<div class="card${c.warn ? ' warn' : ''}"><div class="num">${c.num}</div><div class="lbl">${c.lbl}</div></div>`
     ).join('');
@@ -1020,6 +1052,7 @@ $('listUpload').onclick = uploadListing;
 
 $('sendCodeBtn').onclick = requestCode;
 $('adminLink').onclick = unlockAdmin;
+$('techLink').onclick = () => loginKey('tech');
 $('loginBtn').onclick = doLogin;
 $('loginCode').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 $('logoutBtn').onclick = doLogout;

@@ -93,8 +93,31 @@ def auth_login():
     ok, err = auth.verify_otp(code)
     if not ok:
         return jsonify(error=err), 401
-    token = auth.create_session()
-    resp = jsonify(ok=True)
+    token = auth.create_session("client")
+    resp = jsonify(ok=True, role="client")
+    resp.set_cookie(
+        "session", token,
+        httponly=True, max_age=settings.session_ttl_seconds, samesite="Lax",
+    )
+    return resp
+
+
+@app.post("/api/auth/login_key")
+def auth_login_key():
+    """管理层/技术层口令登录。role: admin(ADMIN_KEY) / tech(TECH_KEY)。"""
+    body = request.get_json(silent=True) or {}
+    key = (body.get("key") or "").strip()
+    role = (body.get("role") or "").strip()
+    if role == "admin":
+        if not settings.admin_key or key != settings.admin_key:
+            return jsonify(error="口令错误"), 403
+    elif role == "tech":
+        if not settings.tech_key or key != settings.tech_key:
+            return jsonify(error="口令错误"), 403
+    else:
+        return jsonify(error="无效角色"), 400
+    token = auth.create_session(role)
+    resp = jsonify(ok=True, role=role)
     resp.set_cookie(
         "session", token,
         httponly=True, max_age=settings.session_ttl_seconds, samesite="Lax",
@@ -105,8 +128,11 @@ def auth_login():
 @app.get("/api/auth/check")
 def auth_check():
     trial = auth.trial_seconds()
+    token = _get_session_token()
+    authed = auth.check_session(token)
     return jsonify(
-        ok=auth.check_session(_get_session_token()),
+        ok=authed,
+        role=auth.get_role(token) if authed else "guest",
         auth_enabled=auth.auth_enabled(),
         access_enabled=auth.access_enabled(),
         trial_minutes=int(trial / 60) if trial else 0,
