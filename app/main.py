@@ -13,6 +13,7 @@ from . import tools as tool_mod
 from .auth import Auth
 from .agent import Agent
 from .orchestrator import Orchestrator
+from .platforms import get_adapter
 
 settings = load_settings()
 # 统一转绝对路径：避免 Flask send_file 相对路径解析到 app/ 目录的坑
@@ -294,6 +295,67 @@ def delete_document(doc_id: str):
         return jsonify(error="文档不存在"), 404
     logs.add(type="delete", name=(doc or {}).get("name", doc_id))
     return jsonify(ok=True)
+
+
+# ---------------- 商品上架（平台对接） ----------------
+
+@app.get("/api/listing/config")
+def listing_config():
+    adapter = get_adapter(settings.platform, settings)
+    if adapter is None:
+        return jsonify(platform=settings.platform, configured=False, message=f"未知平台 {settings.platform}")
+    ok, msg = adapter.validate_config()
+    return jsonify(platform=adapter.name, configured=ok, message=msg)
+
+
+@app.post("/api/listing/upload")
+def listing_upload():
+    """批量上架：上传成品表格（或传 file_url），选列映射，发布到平台。"""
+    adapter = get_adapter(settings.platform, settings)
+    if adapter is None:
+        return jsonify(error=f"未知平台 {settings.platform}"), 400
+
+    raw = None
+    name = None
+    f = request.files.get("file")
+    if f and f.filename:
+        raw = f.read()
+        name = os.path.basename(f.filename)
+    else:
+        file_url = (request.form.get("file_url") or "").strip()
+        if file_url.startswith("/api/tools/download/"):
+            fname = os.path.basename(file_url)
+            p = os.path.join(settings.data_dir, "output", fname)
+            if os.path.exists(p):
+                with open(p, "rb") as fh:
+                    raw = fh.read()
+                name = fname
+    if not raw:
+        return jsonify(error="未提供成品文件"), 400
+
+    try:
+        rows = tool_mod._parse_table(name, raw)
+    except Exception as e:
+        return jsonify(error=f"表格解析失败: {e}"), 400
+    if not rows:
+        return jsonify(error="表格为空"), 400
+    header = [str(c).strip() if c is not None else "" for c in rows[0]]
+
+    ok, msg = adapter.validate_config()
+    if not ok:
+        return jsonify(error=msg), 400
+
+    mapping = {
+        "title_col": (request.form.get("title_col") or "").strip(),
+        "body_col": (request.form.get("body_col") or "").strip(),
+        "image_col": (request.form.get("image_col") or "").strip(),
+        "tags_col": (request.form.get("tags_col") or "").strip(),
+        "status": (request.form.get("status") or "draft").strip(),
+    }
+    result = adapter.upload_products(rows[1:], header, mapping, settings)
+    logs.add(type="listing", platform=adapter.name, title_col=mapping["title_col"],
+             created=result.get("created", 0), total=result.get("total", 0), level="info")
+    return jsonify(result)
 
 
 # ---------------- 编排器（多Agent分工流水线） ----------------

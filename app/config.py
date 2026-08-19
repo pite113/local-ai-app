@@ -38,6 +38,10 @@ class Settings:
     image_api_base: str = ""
     image_api_key: str = ""
     image_api_model: str = ""
+    # 上架平台
+    platform: str = "shopify"
+    shopify_shop: str = ""              # 店铺名，不含 .myshopify.com
+    shopify_access_token: str = ""
     # 工具与日志
     tool_concurrency: int = 3       # 批量文本并发数
     log_max_mb: float = 2.0         # 日志文件轮转上限(MB)
@@ -107,6 +111,9 @@ def load_settings() -> Settings:
     s.image_api_base = os.environ.get("IMAGE_API_BASE_URL", s.image_api_base).strip()
     s.image_api_key = os.environ.get("IMAGE_API_KEY", s.image_api_key).strip()
     s.image_api_model = os.environ.get("IMAGE_API_MODEL", s.image_api_model).strip()
+    s.platform = os.environ.get("PLATFORM", s.platform).strip().lower()
+    s.shopify_shop = os.environ.get("SHOPIFY_SHOP", s.shopify_shop).strip()
+    s.shopify_access_token = os.environ.get("SHOPIFY_ACCESS_TOKEN", s.shopify_access_token).strip()
     s.tool_concurrency = int(os.environ.get("TOOL_CONCURRENCY", str(s.tool_concurrency)))
     s.log_max_mb = float(os.environ.get("LOG_MAX_MB", str(s.log_max_mb)))
     s.agent_max_iterations = int(os.environ.get("AGENT_MAX_ITERATIONS", str(s.agent_max_iterations)))

@@ -301,6 +301,24 @@
           <div id="orchResult"></div>
         </div>
       </div>
+      <div class="panel" style="margin-top:16px;">
+        <h3>🚀 商品上架（平台: <span id="listPlat">检测中…</span>）</h3>
+        <div class="body">
+          <div class="tool-row">
+            <input type="file" id="listFile" accept=".xlsx,.csv">
+            <button class="sec" id="listParse">📖 解析列</button>
+            <label id="listFileInfo"></label>
+          </div>
+          <div class="tool-row" id="listMapRow" style="display:none;">
+            <select id="listTitleCol" style="max-width:130px;"></select><label style="font-size:12px;">标题列</label>
+            <select id="listBodyCol" style="max-width:130px;"></select><label style="font-size:12px;">描述列</label>
+            <select id="listImgCol" style="max-width:130px;"></select><label style="font-size:12px;">图片列</label>
+            <select id="listStatus"><option value="draft">草稿</option><option value="active">立即上架</option></select>
+            <button id="listUpload">🚀 批量上架</button>
+          </div>
+          <div id="listResult"></div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -552,7 +570,7 @@ async function reindexDocs() {
 }
 
 /* ---------- 运行监控 ---------- */
-const TYPE_LABEL = { chat_request: '对话', retrieval: '检索', upload: '上传', delete: '删除', system: '系统', tool_text: '工具·文本', tool_image: '工具·作图', tool_table: '工具·表格', agent_run: 'Agent·任务', agent_step: 'Agent·步骤', orchestrator: '编排·流水线', other: '其他' };
+const TYPE_LABEL = { chat_request: '对话', retrieval: '检索', upload: '上传', delete: '删除', system: '系统', tool_text: '工具·文本', tool_image: '工具·作图', tool_table: '工具·表格', agent_run: 'Agent·任务', agent_step: 'Agent·步骤', orchestrator: '编排·流水线', listing: '上架·发布', other: '其他' };
 
 async function loadStats() {
   try {
@@ -876,6 +894,65 @@ async function runOrch(approveImages) {
   }
 }
 
+/* ---------- 商品上架 ---------- */
+let listColumns = [];
+let listFileObj = null;
+
+async function checkListing() {
+  try {
+    const r = await fetch('/api/listing/config');
+    const j = await r.json();
+    $('listPlat').textContent = `${j.platform} · ${j.configured ? '✅ 已配置' : '⚠️ ' + j.message}`;
+  } catch (e) { $('listPlat').textContent = '服务未连接'; }
+}
+
+async function parseListFile() {
+  const f = $('listFile').files[0];
+  if (!f) { toast('请选择成品表格'); return; }
+  listFileObj = f;
+  const fd = new FormData(); fd.append('file', f);
+  const r = await fetch('/api/tools/table/preview', { method: 'POST', body: fd });
+  const j = await r.json();
+  if (!r.ok) { toast('⚠️ ' + (j.error || '解析失败')); return; }
+  listColumns = j.columns || [];
+  const empty = '<option value="">(无)</option>';
+  $('listTitleCol').innerHTML = empty + listColumns.map(c => `<option value="${c}">${c}</option>`).join('');
+  $('listBodyCol').innerHTML = empty + listColumns.map(c => `<option value="${c}">${c}</option>`).join('');
+  $('listImgCol').innerHTML = empty + listColumns.map(c => `<option value="${c}">${c}</option>`).join('');
+  // 智能预选：优先"处理结果_*"或含"标题/名"的列作标题
+  const guess = (kw) => {
+    const hit = listColumns.find(c => c.includes(kw));
+    return hit || '';
+  };
+  $('listTitleCol').value = guess('标题') || guess('名称') || '';
+  $('listBodyCol').value = guess('处理结果_描述') || guess('描述') || guess('处理结果') || '';
+  $('listImgCol').value = listColumns.find(c => c === '图片') || '';
+  $('listMapRow').style.display = 'flex';
+  $('listFileInfo').textContent = `${f.name} · ${j.total_rows} 行 · 列: ${listColumns.join('、')}`;
+}
+
+async function uploadListing() {
+  if (!listFileObj) { toast('请先选择并解析文件'); return; }
+  const fd = new FormData();
+  fd.append('file', listFileObj);
+  fd.append('title_col', $('listTitleCol').value);
+  fd.append('body_col', $('listBodyCol').value);
+  fd.append('image_col', $('listImgCol').value);
+  fd.append('status', $('listStatus').value);
+  const btn = $('listUpload'); btn.disabled = true; btn.textContent = '上架中…';
+  $('listResult').innerHTML = '<div class="hint">正在批量发布到平台…</div>';
+  try {
+    const r = await fetch('/api/listing/upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '上架失败');
+    const okCount = j.results.filter(x => x.status === '成功').length;
+    $('listResult').innerHTML = `<div class="tool-result"><span class="ok">✅ 成功 ${okCount}/${j.total} 个商品</span><br>` +
+      j.results.map(x => `<div>${x.title || '(空)'} — ${x.status}${x.id ? ' (ID:' + x.id + ')' : ''}</div>`).join('') + '</div>';
+    toast(`上架完成：${okCount}/${j.total}`);
+  } catch (e) { $('listResult').innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`; }
+  btn.disabled = false; btn.textContent = '🚀 批量上架';
+}
+
 /* ---------- 事件绑定 ---------- */
 $('sendBtn').onclick = send;
 $('input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
@@ -919,13 +996,15 @@ $('tableRun').onclick = processTable;
 $('agentRun').onclick = runAgent;
 $('agentCancel').onclick = cancelAgent;
 $('orchPlan').onclick = genOrchPlan;
+$('listParse').onclick = parseListFile;
+$('listUpload').onclick = uploadListing;
 
 $('sendCodeBtn').onclick = requestCode;
 $('loginBtn').onclick = doLogin;
 $('loginCode').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 $('logoutBtn').onclick = doLogout;
 
-checkAuth().then(ok => { if (ok) { refreshStatus(); loadDocs(); loadLogs(); restoreChat(); } });
+checkAuth().then(ok => { if (ok) { refreshStatus(); loadDocs(); loadLogs(); restoreChat(); checkListing(); } });
 </script>
 </body>
 </html>
