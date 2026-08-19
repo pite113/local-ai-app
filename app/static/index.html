@@ -104,6 +104,17 @@
   #sendCodeBtn { background: #fff; color: #0984e3; border: 1px solid #0984e3 !important; }
   #loginErr { color: #d63031; font-size: 13px; min-height: 18px; margin-top: 10px; }
   #logoutBtn { display: none; background: none; border: 1px solid #636e72; color: #b2bec3; border-radius: 12px; padding: 3px 12px; font-size: 12px; cursor: pointer; margin-left: 8px; }
+  /* ---- 切片查看弹窗 ---- */
+  #chunkModal { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 998; display: none; align-items: center; justify-content: center; }
+  #chunkBox { background: #fff; border-radius: 12px; width: min(760px, 92vw); max-height: 85vh; display: flex; flex-direction: column; }
+  #chunkBox header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid #dfe6e9; }
+  #chunkBox header h3 { font-size: 15px; }
+  #chunkBox header button { background: none; border: none; font-size: 18px; cursor: pointer; color: #636e72; }
+  #chunkList { overflow-y: auto; padding: 14px 18px; }
+  .chunk-item { border: 1px solid #dfe6e9; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; font-size: 13px; }
+  .chunk-item .chunk-head { display: flex; justify-content: space-between; color: #0984e3; font-weight: 600; margin-bottom: 6px; font-size: 12px; }
+  .chunk-item .chunk-text { white-space: pre-wrap; word-break: break-all; line-height: 1.6; }
+  .chunk-item .chunk-text .divider { color: #d63031; }
 </style>
 </head>
 <body>
@@ -111,6 +122,14 @@
   <h1>🤖 本地 AI 工作台</h1>
   <div><button id="logoutBtn" title="退出登录">退出</button><span class="badge" id="statusBadge">连接中…</span></div>
 </header>
+
+<!-- 切片查看弹窗 -->
+<div id="chunkModal">
+  <div id="chunkBox">
+    <header><h3 id="chunkTitle">切片详情</h3><button onclick="$('chunkModal').style.display='none'">✕</button></header>
+    <div id="chunkList"></div>
+  </div>
+</div>
 
 <!-- 登录遮罩 -->
 <div id="loginMask" style="display:none;">
@@ -244,7 +263,7 @@
 
   <!-- 侧栏：知识库 -->
   <aside>
-    <h2>📚 知识库</h2>
+    <h2>📚 知识库 <button id="reindexBtn" title="按当前参数重新切片" style="float:right;background:none;border:1px solid #dfe6e9;border-radius:6px;font-size:12px;padding:2px 8px;cursor:pointer;color:#636e72;">🔄 重新切片</button></h2>
     <div class="drop" id="drop">点击或拖拽文件到这里<br><small>支持 .txt / .md / .csv / .json / .log</small></div>
     <div id="docs"></div>
     <button id="clearBtn">🗑 清空对话</button>
@@ -433,8 +452,9 @@ async function loadDocs() {
   box.innerHTML = docs.length ? '' : '<div class="hint">还没有文档，先上传一个吧</div>';
   docs.forEach(d => {
     const row = document.createElement('div'); row.className = 'doc';
-    row.innerHTML = `<div class="meta"><span>📄 ${d.name}</span><small>${d.chunks} 段 · ${d.added}</small></div><button title="删除">✕</button>`;
-    row.querySelector('button').onclick = async () => {
+    row.innerHTML = `<div class="meta"><span>📄 ${d.name}</span><small>${d.chunks} 段 · ${d.added}</small></div><div style="display:flex;gap:8px;"><button title="查看切片" style="color:#0984e3;">📖</button><button title="删除" style="color:#d63031;">✕</button></div>`;
+    row.querySelectorAll('button')[0].onclick = () => showChunks(d.id, d.name);
+    row.querySelectorAll('button')[1].onclick = async () => {
       await fetch('/api/documents/' + d.id, { method: 'DELETE' });
       loadDocs(); refreshStatus();
     };
@@ -450,6 +470,33 @@ async function uploadFile(file) {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || '上传失败');
     toast(`已导入《${j.name}》(${j.chunks} 段)`);
+    loadDocs(); refreshStatus();
+  } catch (e) { toast('⚠️ ' + e.message); }
+}
+
+async function showChunks(docId, docName) {
+  try {
+    const r = await fetch('/api/documents/' + docId);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '获取失败');
+    $('chunkTitle').textContent = `切片详情 · ${j.name}（${j.chunks.length} 段）`;
+    $('chunkList').innerHTML = j.chunks.map(c =>
+      `<div class="chunk-item">
+        <div class="chunk-head"><span>#${c.index + 1}${c.heading ? ' · ' + c.heading : ''}</span><span>${c.chars} 字</span></div>
+        <div class="chunk-text">${c.text.replace(/</g, '&lt;')}</div>
+      </div>`
+    ).join('') || '<div class="hint">该文档没有切片</div>';
+    $('chunkModal').style.display = 'flex';
+  } catch (e) { toast('⚠️ ' + e.message); }
+}
+
+async function reindexDocs() {
+  if (!confirm('按当前切片参数重新切片全部文档？（改过 .env 的 CHUNK_SIZE 后用它生效）')) return;
+  try {
+    const r = await fetch('/api/documents/reindex', { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || '失败');
+    toast(`重新切片完成：${j.docs} 篇`);
     loadDocs(); refreshStatus();
   } catch (e) { toast('⚠️ ' + e.message); }
 }
@@ -628,6 +675,7 @@ $('drop').onclick = () => { const i = document.createElement('input'); i.type = 
 $('drop').addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('over'); });
 $('drop').addEventListener('dragleave', () => $('drop').classList.remove('over'));
 $('drop').addEventListener('drop', e => { e.preventDefault(); $('drop').classList.remove('over'); uploadFile(e.dataTransfer.files[0]); });
+$('reindexBtn').onclick = reindexDocs;
 
 $('tabChat').onclick = () => switchTab('chat');
 $('tabMonitor').onclick = () => switchTab('monitor');

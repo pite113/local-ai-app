@@ -234,6 +234,23 @@ def documents():
     return jsonify(documents=index.list())
 
 
+@app.get("/api/documents/<doc_id>")
+def document_detail(doc_id: str):
+    """查看单篇文档的切片详情（自检用）。"""
+    info = index.detail(doc_id)
+    if info is None:
+        return jsonify(error="文档不存在"), 404
+    return jsonify(info)
+
+
+@app.post("/api/documents/reindex")
+def reindex_documents():
+    """按当前 .env 切片参数重新切片全部文档（从原件重读）。"""
+    n = index.reindex(settings.chunk_size, settings.chunk_min_size)
+    logs.add(type="system", message=f"重新切片完成: {n} 篇")
+    return jsonify(ok=True, docs=n)
+
+
 @app.delete("/api/documents/<doc_id>")
 def delete_document(doc_id: str):
     doc = next((d for d in index.docs if d["id"] == doc_id), None)

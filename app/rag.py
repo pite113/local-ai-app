@@ -186,6 +186,52 @@ class Index:
             for d in self.docs
         ]
 
+    def reindex(self, chunk_size: int, min_size: int) -> int:
+        """按当前切片参数重新切片全部文档（从 data/uploads 原件重新读取）。"""
+        done = 0
+        for d in self.docs:
+            src = d.get("source")
+            if not src or not os.path.exists(src):
+                continue
+            try:
+                with open(src, encoding="utf-8") as f:
+                    text = f.read()
+            except Exception:
+                continue
+            text = text.lstrip("\ufeff")
+            pairs = chunk_text(text, chunk_size, min_size)
+            chunks = [{"text": t, "heading": h} for h, t in pairs]
+            try:
+                embs = self.embedder.embed([c["text"] for c in chunks])
+                for c, e in zip(chunks, embs):
+                    c["emb"] = _to_jsonable(e)
+            except Exception:
+                pass
+            d["chunks"] = chunks
+            done += 1
+        self._save()
+        return done
+
+    def detail(self, doc_id: str):
+        """返回单篇文档的切片详情（供自检）。"""
+        for d in self.docs:
+            if d["id"] == doc_id:
+                return {
+                    "id": d["id"],
+                    "name": d["name"],
+                    "added": d.get("added", ""),
+                    "chunks": [
+                        {
+                            "index": i,
+                            "heading": c.get("heading", ""),
+                            "text": c["text"],
+                            "chars": len(c["text"]),
+                        }
+                        for i, c in enumerate(d["chunks"])
+                    ],
+                }
+        return None
+
     # ---------- 检索 ----------
     def retrieve(self, query: str, k: int = 3):
         """返回 {hits: [...], removed: n}。hits 每项含 score/doc/heading/text。"""
