@@ -357,17 +357,22 @@ function applyRoleUI(role) {
   if (isClient && $('tabMonitor').classList.contains('active')) switchTab('chat');
 }
 
-/* 全局拦截：任意接口返回 403(演示已关闭) 时，立即切回登录页并提示 */
+/* 全局拦截：仅在"演示已关闭"(访问总开关)时切回登录页提示；角色越权等其它403交给调用方处理 */
 (function () {
   const origFetch = window.fetch;
   window.fetch = async function (...args) {
     const r = await origFetch.apply(this, args);
     if (r.status === 403) {
-      authed = false;
-      $('loginMask').style.display = 'flex';
-      $('loginErr').textContent = '🔒 演示已关闭，请联系管理员';
-      $('sendCodeBtn').disabled = true;
-      $('loginBtn').disabled = true;
+      try {
+        const j = await r.clone().json();
+        if (j && j.error && String(j.error).includes('演示已关闭')) {
+          authed = false;
+          $('loginMask').style.display = 'flex';
+          $('loginErr').textContent = '🔒 演示已关闭，请联系管理员';
+          $('sendCodeBtn').disabled = true;
+          $('loginBtn').disabled = true;
+        }
+      } catch (e) { /* 非JSON响应不处理 */ }
     }
     return r;
   };
@@ -1067,7 +1072,12 @@ $('loginBtn').onclick = doLogin;
 $('loginCode').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 $('logoutBtn').onclick = doLogout;
 
-checkAuth().then(ok => { if (ok) { refreshStatus(); loadDocs(); loadLogs(); restoreChat(); checkListing(); } });
+checkAuth().then(ok => {
+  if (ok) {
+    refreshStatus(); loadDocs(); restoreChat(); checkListing();
+    if (userRole !== 'client') loadLogs();  // 使用层无监控权限，不请求日志接口
+  }
+});
 </script>
 </body>
 </html>
