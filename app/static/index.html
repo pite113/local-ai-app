@@ -585,26 +585,39 @@ async function send() {
   if (!msg) return;
   input.value = ''; addMsg('user', msg);
   const btn = $('sendBtn'); btn.disabled = true;
+  // 手动创建"处理中"提示（不存入历史）
+  const box = $('messages');
+  const hintDiv = document.createElement('div');
+  hintDiv.className = 'msg ai';
+  hintDiv.textContent = '🤖 正在处理中，请稍候…';
+  box.appendChild(hintDiv);
+  box.scrollTop = box.scrollHeight;
   // 携带最近对话历史，让聊天能连贯执行多步任务
   const history = [];
   document.querySelectorAll('#messages .msg').forEach(el => {
     const role = el.classList.contains('user') ? 'user' : 'assistant';
     const t = el.querySelector('.txt');
-    if (t && t.textContent) history.push({ role, content: t.textContent });
+    if (t && t.textContent && t.textContent !== '🤖 正在处理中，请稍候…') history.push({ role, content: t.textContent });
   });
   try {
     const r = await fetch('/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg, use_kb: $('useKb').checked, history: history.slice(-10) })
     });
-    const j = await r.json();
+    let j = {};
+    try { j = await r.json(); }
+    catch (e) { throw new Error('服务器响应异常（请求可能超时或被网络中断），请重试'); }
     if (!r.ok) throw new Error(j.error || '请求失败');
     let answer = j.answer || '';
     if (j.steps && j.steps.length) {
       answer += '\n\n🛠 执行步骤: ' + j.steps.map(s => s.tool + '(' + s.summary + ')').join(' → ');
     }
+    if (hintDiv.parentNode) hintDiv.remove();
     addMsg('ai', answer, null, j.images || []);
-  } catch (e) { addMsg('ai', '⚠️ ' + e.message); }
+  } catch (e) {
+    if (hintDiv.parentNode) hintDiv.remove();
+    addMsg('ai', '⚠️ ' + e.message);
+  }
   btn.disabled = false;
 }
 
