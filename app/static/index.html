@@ -499,7 +499,7 @@ async function refreshStatus() {
 /* ---------- 对话 ---------- */
 const CHAT_KEY = 'localAiChatHistory';
 
-function addMsg(role, text, sources) {
+function addMsg(role, text, sources, images) {
   const box = $('messages');
   const div = document.createElement('div');
   div.className = 'msg ' + (role === 'user' ? 'user' : 'ai');
@@ -507,6 +507,17 @@ function addMsg(role, text, sources) {
   txt.className = 'txt';
   txt.textContent = text;
   div.appendChild(txt);
+  if (images && images.length) {
+    images.forEach(url => {
+      const img = document.createElement('img');
+      img.src = url;
+      img.style.maxWidth = '260px';
+      img.style.borderRadius = '8px';
+      img.style.margin = '6px 0';
+      img.style.display = 'block';
+      div.appendChild(img);
+    });
+  }
   if (role === 'ai' && sources && sources.length) {
     const s = document.createElement('div');
     s.className = 'src';
@@ -524,10 +535,11 @@ function saveChat() {
     document.querySelectorAll('#messages .msg').forEach(el => {
       const role = el.classList.contains('user') ? 'user' : 'ai';
       const txt = el.querySelector('.txt');
+      const imgs = Array.from(el.querySelectorAll('img')).map(i => i.src);
       const srcEl = el.querySelector('.src');
       let sources = null;
       if (srcEl) sources = Array.from(srcEl.querySelectorAll('b')).map(b => ({ doc: b.textContent.replace(/[《》]/g, '') }));
-      items.push({ role, text: txt ? txt.textContent : '', sources });
+      items.push({ role, text: txt ? txt.textContent : '', sources, images: imgs });
     });
     localStorage.setItem(CHAT_KEY, JSON.stringify(items.slice(-50)));
   } catch (e) { /* 本地存储失败不影响使用 */ }
@@ -545,6 +557,17 @@ function restoreChat() {
       txt.className = 'txt';
       txt.textContent = it.text;
       div.appendChild(txt);
+      if (it.images && it.images.length) {
+        it.images.forEach(url => {
+          const img = document.createElement('img');
+          img.src = url;
+          img.style.maxWidth = '260px';
+          img.style.borderRadius = '8px';
+          img.style.margin = '6px 0';
+          img.style.display = 'block';
+          div.appendChild(img);
+        });
+      }
       if (it.role === 'ai' && it.sources && it.sources.length) {
         const s = document.createElement('div');
         s.className = 'src';
@@ -562,14 +585,25 @@ async function send() {
   if (!msg) return;
   input.value = ''; addMsg('user', msg);
   const btn = $('sendBtn'); btn.disabled = true;
+  // 携带最近对话历史，让聊天能连贯执行多步任务
+  const history = [];
+  document.querySelectorAll('#messages .msg').forEach(el => {
+    const role = el.classList.contains('user') ? 'user' : 'assistant';
+    const t = el.querySelector('.txt');
+    if (t && t.textContent) history.push({ role, content: t.textContent });
+  });
   try {
     const r = await fetch('/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg, use_kb: $('useKb').checked })
+      body: JSON.stringify({ message: msg, use_kb: $('useKb').checked, history: history.slice(-10) })
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || '请求失败');
-    addMsg('ai', j.answer, j.sources);
+    let answer = j.answer || '';
+    if (j.steps && j.steps.length) {
+      answer += '\n\n🛠 执行步骤: ' + j.steps.map(s => s.tool + '(' + s.summary + ')').join(' → ');
+    }
+    addMsg('ai', answer, null, j.images || []);
   } catch (e) { addMsg('ai', '⚠️ ' + e.message); }
   btn.disabled = false;
 }

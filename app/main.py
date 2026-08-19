@@ -222,47 +222,15 @@ def chat():
         logs.add(type="chat_request", level="error", message="", error="消息不能为空")
         return jsonify(error="消息不能为空"), 400
     use_kb = body.get("use_kb", True)
-
-    start = time.time()
-    ret = index.retrieve(msg, settings.top_k) if use_kb else {"hits": [], "removed": 0}
-    context = ret["hits"]
-    logs.add(
-        type="retrieval",
-        message=msg[:60],
-        hits=len(context),
-        removed=ret["removed"],
-        mode=embedder.name,
-        top_score=round(context[0]["score"], 4) if context else 0,
+    history = body.get("history") or []
+    if not use_kb:
+        msg = "（本次对话不需要使用知识库，除非用户明确要求）" + msg
+    result = agent.chat_run(history + [{"role": "user", "content": msg}])
+    return jsonify(
+        answer=result.get("answer", ""),
+        images=result.get("images", []),
+        steps=result.get("steps", []),
     )
-
-    user_prompt = msg
-    if context:
-        blocks = "\n\n".join(
-            f"【来自文档《{c['doc']}》{('· ' + c['heading']) if c.get('heading') else ''}】\n{c['text']}"
-            for c in context
-        )
-        user_prompt = f"参考资料：\n{blocks}\n\n问题：{msg}"
-
-    try:
-        answer, tokens_in, tokens_out = llm.chat(
-            [{"role": "user", "content": user_prompt}], system=SYSTEM_PROMPT
-        )
-    except Exception as e:
-        logs.add(type="chat_request", level="error", message=msg[:60], error=str(e)[:300])
-        return jsonify(error=f"模型调用失败: {e}"), 502
-
-    duration = (time.time() - start) * 1000
-    logs.add(
-        type="chat_request",
-        message=msg[:60],
-        hits=len(context),
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        cost=round(_cost(tokens_in, tokens_out), 6),
-        duration_ms=round(duration, 1),
-        model=getattr(llm, "model", llm.name),
-    )
-    return jsonify(answer=answer, sources=context)
 
 
 @app.post("/api/documents")

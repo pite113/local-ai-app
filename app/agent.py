@@ -35,6 +35,19 @@ SYSTEM_PROMPT = (
     "5. 全部步骤完成后，用中文汇总：做了什么、结果如何、注意事项（如图片文件位置）。"
 )
 
+CHAT_SYSTEM = (
+    "你是一个部署在本地、能自主调用工具的 AI 助手。可用工具：\n"
+    "- kb_search(query): 在本地知识库检索资料\n"
+    "- kb_list(): 列出知识库文档\n"
+    "- text_batch(items, mode, language, instruction): 批量处理文本"
+    "（mode: translate翻译/rewrite改写/generate生成文案；items 为文本数组）\n"
+    "- image_generate(prompts, size): 生成图片（prompts 为提示词数组，size 可选 512x512/1024x1024）\n\n"
+    "要求：\n"
+    "1. 用户要求生成图片、处理文本、查询资料时，必须调用对应工具完成，禁止假装完成。\n"
+    "2. 用中文回复；工具执行后，先告知结果再补充说明。\n"
+    "3. 图片生成后，直接告诉用户图片已生成。"
+)
+
 
 class Agent:
     def __init__(self, settings: Settings, llm: BaseLLM, logs: LogStore, kb):
@@ -167,6 +180,72 @@ class Agent:
         with self._lock:
             self.runs.pop(run_id, None)
         return {"ok": True}
+
+    # ---------- 对话模式（聊天即任务入口，自动执行工具，图片返回上下文） ----------
+    def chat_run(self, history: list):
+        """history: [{"role": user|assistant, "content": str}]。自动执行工具（不暂停确认）。
+        返回 {answer, images, steps, usage}。"""
+        messages = [
+            {"role": m["role"], "content": str(m.get("content", ""))[:2000]}
+            for m in history[-10:] if m.get("role") in ("user", "assistant")
+        ]
+        steps = []
+        images = []
+        t_in = t_out = 0
+        limit = self.s.agent_max_iterations or MAX_ITERATIONS
+        for _ in range(limit):
+            try:
+                content, tool_calls, ti, to = self.llm.chat_with_tools(
+                    messages, self._tool_specs(), system=CHAT_SYSTEM
+                )
+            except Exception as e:
+                self.logs.add(type="chat_request", level="error", error=str(e)[:300])
+                return {"answer": f"[工具调用失败] {e}", "images": images, "steps": steps,
+                        "usage": {"tokens_in": t_in, "tokens_out": t_out}}
+            t_in += ti
+            t_out += to
+            if not tool_calls:
+                self.logs.add(type="chat_request", message=history[-1].get("content", "")[:60],
+                              tokens_in=t_in, tokens_out=t_out,
+                              cost=round(t_in / 1e6 * self.s.price_in + t_out / 1e6 * self.s.price_out, 6),
+                              level="info")
+                return {"answer": content, "images": images, "steps": steps,
+                        "usage": {"tokens_in": t_in, "tokens_out": t_out}}
+            # 规范化 call_id，assistant 消息与回传一致
+            norm = [
+                {"id": tc["id"] or f"call_{i}", "name": tc["name"], "arguments": tc["arguments"]}
+                for i, tc in enumerate(tool_calls)
+            ]
+            messages.append({
+                "role": "assistant", "content": content,
+                "tool_calls": [
+                    {"id": n["id"], "type": "function",
+                     "function": {"name": n["name"], "arguments": n["arguments"]}}
+                    for n in norm
+                ],
+            })
+            for nc in norm:
+                tool = self._find_tool(nc["name"])
+                try:
+                    args = json.loads(nc["arguments"] or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                if tool is None:
+                    result = {"error": f"未知工具 {nc['name']}"}
+                else:
+                    try:
+                        result = self._execute_tool(tool["name"], args)
+                    except Exception as e:
+                        result = {"error": str(e)}
+                messages.append({
+                    "role": "tool", "tool_call_id": nc["id"], "name": nc["name"],
+                    "content": json.dumps(result, ensure_ascii=False)[:2000],
+                })
+                steps.append({"tool": nc["name"], "summary": self._summarize_result(nc["name"], result)})
+                if nc["name"] == "image_generate" and isinstance(result, list):
+                    images.extend(img["url"] for img in result if img.get("url"))
+        return {"answer": "已达步数上限，请把请求拆小后重试", "images": images, "steps": steps,
+                "usage": {"tokens_in": t_in, "tokens_out": t_out}}
 
     # ---------- 循环 ----------
     def _step(self, run_id: str):
