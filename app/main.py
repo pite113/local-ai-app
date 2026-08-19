@@ -78,6 +78,10 @@ def require_auth():
 
 @app.post("/api/auth/request")
 def auth_request():
+    """发送验证码：需管理员口令（防他人刷邮件）。ADMIN_KEY 未设置时保持开放。"""
+    key = request.headers.get("X-Admin-Key") or ""
+    if settings.admin_key and key != settings.admin_key:
+        return jsonify(error="口令错误"), 403
     result = auth.request_otp()
     return jsonify(result)
 

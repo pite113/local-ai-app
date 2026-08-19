@@ -138,9 +138,10 @@
     <p>本系统需要访问验证码。请向管理员获取验证码，或点击下方按钮发送到管理员邮箱。</p>
     <input id="loginCode" type="text" maxlength="6" placeholder="6位验证码" autocomplete="one-time-code">
     <div class="row">
-      <button id="sendCodeBtn">📧 发送验证码到邮箱</button>
+      <button id="sendCodeBtn" style="display:none;">📧 发送验证码到邮箱</button>
       <button id="loginBtn">登录</button>
     </div>
+    <div style="margin-top:10px;"><a id="adminLink" style="font-size:12px;color:#0984e3;cursor:pointer;">管理员入口</a></div>
     <div id="loginErr"></div>
   </div>
 </div>
@@ -385,8 +386,18 @@ async function requestCode() {
   const btn = $('sendCodeBtn'); btn.disabled = true;
   $('loginErr').textContent = '正在发送…';
   try {
-    const r = await fetch('/api/auth/request', { method: 'POST' });
+    const r = await fetch('/api/auth/request', {
+      method: 'POST',
+      headers: { 'X-Admin-Key': localStorage.getItem('adminKey') || '' }
+    });
     const j = await r.json();
+    if (r.status === 403) {
+      localStorage.removeItem('adminKey');
+      $('sendCodeBtn').style.display = 'none';
+      $('loginErr').textContent = '⚠️ 口令错误，请重新通过管理员入口输入';
+      btn.disabled = false;
+      return;
+    }
     if (j.sent) {
       $('loginErr').textContent = j.warning ? '⚠️ ' + j.warning + '（验证码: ' + j.debug_code + '）' : '✅ 验证码已发送到管理员邮箱，请查收';
     } else {
@@ -394,6 +405,14 @@ async function requestCode() {
     }
   } catch (e) { $('loginErr').textContent = '⚠️ 请求失败'; }
   setTimeout(() => { btn.disabled = false; }, 3000);
+}
+
+function unlockAdmin() {
+  const k = prompt('请输入管理员口令：');
+  if (!k) return;
+  localStorage.setItem('adminKey', k.trim());
+  $('sendCodeBtn').style.display = 'inline-block';
+  $('loginErr').textContent = '验证码按钮已解锁，点击发送';
 }
 
 async function doLogin() {
@@ -1000,6 +1019,7 @@ $('listParse').onclick = parseListFile;
 $('listUpload').onclick = uploadListing;
 
 $('sendCodeBtn').onclick = requestCode;
+$('adminLink').onclick = unlockAdmin;
 $('loginBtn').onclick = doLogin;
 $('loginCode').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 $('logoutBtn').onclick = doLogout;
