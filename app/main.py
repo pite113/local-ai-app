@@ -104,18 +104,20 @@ def auth_login():
 
 @app.post("/api/auth/login_key")
 def auth_login_key():
-    """管理层/技术层口令登录。role: admin(ADMIN_KEY) / tech(TECH_KEY)。"""
+    """口令登录。role: admin(ADMIN_KEY) / tech(TECH_KEY) / client(CLIENT_KEY)。"""
     body = request.get_json(silent=True) or {}
     key = (body.get("key") or "").strip()
     role = (body.get("role") or "").strip()
     if role == "admin":
-        if not settings.admin_key or key != settings.admin_key:
-            return jsonify(error="口令错误"), 403
+        expected = settings.admin_key
     elif role == "tech":
-        if not settings.tech_key or key != settings.tech_key:
-            return jsonify(error="口令错误"), 403
+        expected = settings.tech_key
+    elif role == "client":
+        expected = settings.client_key
     else:
         return jsonify(error="无效角色"), 400
+    if not expected or key != expected:
+        return jsonify(error="口令错误"), 403
     token = auth.create_session(role)
     resp = jsonify(ok=True, role=role)
     resp.set_cookie(

@@ -136,12 +136,16 @@
   <div id="loginBox">
     <h2>🔐 访问验证</h2>
     <p>本系统需要访问验证码。请向管理员获取验证码，或点击下方按钮发送到管理员邮箱。</p>
-    <input id="loginCode" type="text" maxlength="6" placeholder="6位验证码" autocomplete="one-time-code">
+    <input id="loginCode" type="text" maxlength="6" placeholder="6位验证码(外部访客用)" autocomplete="one-time-code">
     <div class="row">
-      <button id="sendCodeBtn" style="display:none;">📧 发送验证码到邮箱</button>
+      <button id="sendCodeBtn">📧 管理员发验证码</button>
       <button id="loginBtn">登录</button>
     </div>
-    <div style="margin-top:10px;"><a id="adminLink" style="font-size:12px;color:#0984e3;cursor:pointer;">管理员入口</a> · <a id="techLink" style="font-size:12px;color:#0984e3;cursor:pointer;">技术入口</a></div>
+    <div style="margin-top:12px;display:flex;gap:14px;justify-content:center;">
+      <a id="clientLink" style="font-size:13px;color:#0984e3;cursor:pointer;">👤 使用入口</a>
+      <a id="techLink" style="font-size:13px;color:#0984e3;cursor:pointer;">🛠 技术入口</a>
+      <a id="adminLink" style="font-size:13px;color:#0984e3;cursor:pointer;">🔑 管理员入口</a>
+    </div>
     <div id="loginErr"></div>
   </div>
 </div>
@@ -398,6 +402,13 @@ async function checkAuth() {
 }
 
 async function requestCode() {
+  // 管理员发码：需要管理层口令（未保存则先询问）
+  let key = localStorage.getItem('adminKey');
+  if (!key) {
+    key = prompt('请输入管理层口令以发送验证码：');
+    if (!key) return;
+    localStorage.setItem('adminKey', key.trim());
+  }
   const btn = $('sendCodeBtn'); btn.disabled = true;
   $('loginErr').textContent = '正在发送…';
   try {
@@ -408,8 +419,7 @@ async function requestCode() {
     const j = await r.json();
     if (r.status === 403) {
       localStorage.removeItem('adminKey');
-      $('sendCodeBtn').style.display = 'none';
-      $('loginErr').textContent = '⚠️ 口令错误，请重新通过管理员入口输入';
+      $('loginErr').textContent = '⚠️ 口令错误，请重试';
       btn.disabled = false;
       return;
     }
@@ -422,16 +432,9 @@ async function requestCode() {
   setTimeout(() => { btn.disabled = false; }, 3000);
 }
 
-function unlockAdmin() {
-  const k = prompt('请输入管理员口令：');
-  if (!k) return;
-  localStorage.setItem('adminKey', k.trim());
-  $('sendCodeBtn').style.display = 'inline-block';
-  $('loginErr').textContent = '验证码按钮已解锁，点击发送';
-}
-
 async function loginKey(role) {
-  const k = prompt(role === 'admin' ? '请输入管理层口令：' : '请输入技术层口令：');
+  const label = { admin: '管理层', tech: '技术层', client: '使用层' }[role] || '';
+  const k = prompt(`请输入${label}口令：`);
   if (!k) return;
   try {
     const r = await fetch('/api/auth/login_key', {
@@ -1051,8 +1054,9 @@ $('listParse').onclick = parseListFile;
 $('listUpload').onclick = uploadListing;
 
 $('sendCodeBtn').onclick = requestCode;
-$('adminLink').onclick = unlockAdmin;
+$('adminLink').onclick = () => loginKey('admin');
 $('techLink').onclick = () => loginKey('tech');
+$('clientLink').onclick = () => loginKey('client');
 $('loginBtn').onclick = doLogin;
 $('loginCode').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 $('logoutBtn').onclick = doLogout;

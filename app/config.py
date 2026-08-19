@@ -55,6 +55,7 @@ class Settings:
     auth_enabled: str = "off"       # on=要求验证码登录 | off=直接可用(默认)
     admin_key: str = ""             # 管理层口令（全视角）
     tech_key: str = ""              # 技术层口令（技术功能，无成本/评估）
+    client_key: str = ""            # 使用层口令（仅使用入口）
     otp_ttl_seconds: int = 600          # 验证码有效期 10 分钟
     otp_max_attempts: int = 5           # 最多错误次数
     otp_send_interval: int = 60         # 两次发送最小间隔(秒)
@@ -127,6 +128,7 @@ def load_settings() -> Settings:
     s.auth_enabled = os.environ.get("AUTH_ENABLED", s.auth_enabled).strip().lower()
     s.admin_key = os.environ.get("ADMIN_KEY", s.admin_key).strip()
     s.tech_key = os.environ.get("TECH_KEY", s.tech_key).strip()
+    s.client_key = os.environ.get("CLIENT_KEY", s.client_key).strip()
     s.otp_ttl_seconds = int(os.environ.get("OTP_TTL_SECONDS", str(s.otp_ttl_seconds)))
     s.otp_max_attempts = int(os.environ.get("OTP_MAX_ATTEMPTS", str(s.otp_max_attempts)))
     s.otp_send_interval = int(os.environ.get("OTP_SEND_INTERVAL", str(s.otp_send_interval)))
