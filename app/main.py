@@ -67,7 +67,7 @@ def require_auth():
         return None
     if not auth.access_enabled():
         return jsonify(error="演示已关闭，请联系管理员"), 403
-    if not auth.check_session(_get_session_token()):
+    if auth.auth_enabled() and not auth.check_session(_get_session_token()):
         return jsonify(error="未登录或会话已过期"), 401
 
 
@@ -98,6 +98,7 @@ def auth_check():
     trial = auth.trial_seconds()
     return jsonify(
         ok=auth.check_session(_get_session_token()),
+        auth_enabled=auth.auth_enabled(),
         access_enabled=auth.access_enabled(),
         trial_minutes=int(trial / 60) if trial else 0,
     )

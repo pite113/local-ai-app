@@ -47,6 +47,7 @@ class Settings:
     smtp_user: str = ""
     smtp_pass: str = ""
     mail_to: str = ""
+    auth_enabled: str = "off"       # on=要求验证码登录 | off=直接可用(默认)
     otp_ttl_seconds: int = 600          # 验证码有效期 10 分钟
     otp_max_attempts: int = 5           # 最多错误次数
     otp_send_interval: int = 60         # 两次发送最小间隔(秒)
@@ -112,6 +113,7 @@ def load_settings() -> Settings:
     s.smtp_user = os.environ.get("SMTP_USER", s.smtp_user).strip()
     s.smtp_pass = os.environ.get("SMTP_PASS", s.smtp_pass).strip()
     s.mail_to = os.environ.get("MAIL_TO", s.mail_to).strip()
+    s.auth_enabled = os.environ.get("AUTH_ENABLED", s.auth_enabled).strip().lower()
     s.otp_ttl_seconds = int(os.environ.get("OTP_TTL_SECONDS", str(s.otp_ttl_seconds)))
     s.otp_max_attempts = int(os.environ.get("OTP_MAX_ATTEMPTS", str(s.otp_max_attempts)))
     s.otp_send_interval = int(os.environ.get("OTP_SEND_INTERVAL", str(s.otp_send_interval)))

@@ -299,6 +299,13 @@ async function checkAuth() {
   try {
     const r = await fetch('/api/auth/check');
     const j = await r.json();
+    if (j && !j.auth_enabled) {
+      // 登录验证已关闭：直接进入，无需登录
+      authed = true;
+      $('loginMask').style.display = 'none';
+      $('logoutBtn').style.display = 'none';
+      return true;
+    }
     authed = !!(j && j.ok);
     if (j && !j.access_enabled) {
       $('loginErr').textContent = '🔒 演示已关闭，请联系管理员';

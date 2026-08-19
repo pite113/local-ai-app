@@ -100,6 +100,11 @@ class Auth:
         """总开关：data/access.flag = "off" 时全部关闭。"""
         return self._read_flag("access.flag", "on") == "on"
 
+    def auth_enabled(self) -> bool:
+        """登录验证开关：data/auth_enabled.flag = "off" 时不要求登录（默认关，直接可用）。"""
+        v = self._read_flag("auth_enabled.flag", self.s.auth_enabled)
+        return v == "on"
+
     def trial_seconds(self) -> int:
         """体验时长（秒）；0 表示不限，用默认会话时长。"""
         v = self._read_flag("trial_minutes.flag", "0")
