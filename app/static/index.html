@@ -475,6 +475,12 @@ function toast(msg) {
   clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 2600);
 }
 
+/* HTML 转义：所有不可信数据进 innerHTML 前必须经过它，防 XSS */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 async function refreshStatus() {
   try {
     const r = await fetch('/api/config'); const c = await r.json();
@@ -499,7 +505,7 @@ function addMsg(role, text, sources) {
   if (role === 'ai' && sources && sources.length) {
     const s = document.createElement('div');
     s.className = 'src';
-    s.innerHTML = '📎 参考文档: ' + sources.map(x => `<b>《${x.doc}》</b>${x.heading ? ' · ' + x.heading : ''}`).join('、');
+    s.innerHTML = '📎 参考文档: ' + sources.map(x => `<b>《${esc(x.doc)}》</b>${x.heading ? ' · ' + esc(x.heading) : ''}`).join('、');
     div.appendChild(s);
   }
   box.appendChild(div);
@@ -537,7 +543,7 @@ function restoreChat() {
       if (it.role === 'ai' && it.sources && it.sources.length) {
         const s = document.createElement('div');
         s.className = 'src';
-        s.innerHTML = '📎 参考文档: ' + it.sources.map(x => `<b>《${x.doc}》</b>`).join('、');
+        s.innerHTML = '📎 参考文档: ' + it.sources.map(x => `<b>《${esc(x.doc)}》</b>`).join('、');
         div.appendChild(s);
       }
       $('messages').appendChild(div);
@@ -572,7 +578,7 @@ async function loadDocs() {
   docs.forEach(d => {
     const row = document.createElement('div'); row.className = 'doc';
     const delBtn = userRole === 'client' ? '' : '<button title="删除" style="color:#d63031;">✕</button>';
-    row.innerHTML = `<div class="meta"><span>📄 ${d.name}</span><small>${d.chunks} 段 · ${d.added}</small></div><div style="display:flex;gap:8px;"><button title="查看切片" style="color:#0984e3;">📖</button>${delBtn}</div>`;
+    row.innerHTML = `<div class="meta"><span>📄 ${esc(d.name)}</span><small>${d.chunks} 段 · ${esc(d.added)}</small></div><div style="display:flex;gap:8px;"><button title="查看切片" style="color:#0984e3;">📖</button>${delBtn}</div>`;
     row.querySelectorAll('button')[0].onclick = () => showChunks(d.id, d.name);
     if (userRole !== 'client') {
       row.querySelectorAll('button')[1].onclick = async () => {
@@ -604,8 +610,8 @@ async function showChunks(docId, docName) {
     $('chunkTitle').textContent = `切片详情 · ${j.name}（${j.chunks.length} 段）`;
     $('chunkList').innerHTML = j.chunks.map(c =>
       `<div class="chunk-item">
-        <div class="chunk-head"><span>#${c.index + 1}${c.heading ? ' · ' + c.heading : ''}</span><span>${c.chars} 字</span></div>
-        <div class="chunk-text">${c.text.replace(/</g, '&lt;')}</div>
+        <div class="chunk-head"><span>#${c.index + 1}${c.heading ? ' · ' + esc(c.heading) : ''}</span><span>${c.chars} 字</span></div>
+        <div class="chunk-text">${esc(c.text)}</div>
       </div>`
     ).join('') || '<div class="hint">该文档没有切片</div>';
     $('chunkModal').style.display = 'flex';
@@ -675,12 +681,12 @@ async function loadLogs() {
       if (l.top_score != null) detail += ` [得分${l.top_score}]`;
       if (l.error) detail = '❌ ' + l.error;
       return `<tr>
-        <td style="white-space:nowrap;">${l.ts}</td>
-        <td><span class="type-badge ${l.type || 'other'}">${TYPE_LABEL[l.type] || l.type}</span></td>
+        <td style="white-space:nowrap;">${esc(l.ts)}</td>
+        <td><span class="type-badge ${esc(l.type || 'other')}">${esc(TYPE_LABEL[l.type] || l.type)}</span></td>
         <td><span class="lvl ${l.level === 'error' ? 'err' : 'ok'}">${l.level === 'error' ? '错误' : '正常'}</span></td>
         <td>${dur}</td>
         <td style="white-space:nowrap;">${tok}</td>
-        <td title="${(detail || '').replace(/"/g, '&quot;')}">${(detail || '').slice(0, 60)}${(detail || '').length > 60 ? '…' : ''}</td>
+        <td title="${esc(detail)}">${esc((detail || '').slice(0, 60))}${(detail || '').length > 60 ? '…' : ''}</td>
       </tr>`;
     }).join('');
   } catch (e) { $('logRows').innerHTML = '<tr><td colspan="6"><div class="hint">日志获取失败</div></td></tr>'; }
@@ -705,7 +711,7 @@ async function runTxtBatch() {
     if (!r.ok) throw new Error(j.error || '处理失败');
     txtLastResults = j.results;
     box.innerHTML = j.results.map((res, i) =>
-      `<div class="item"><div class="orig">${i + 1}. ${items[i]}</div><div>${res.replace(/</g, '&lt;')}</div></div>`
+      `<div class="item"><div class="orig">${i + 1}. ${esc(items[i])}</div><div>${esc(res)}</div></div>`
     ).join('');
     $('txtActions').style.display = 'flex';
     toast('处理完成');
@@ -781,8 +787,8 @@ async function processTable() {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || '处理失败');
     const box = $('tableOut');
-    let previewHtml = '<table><thead><tr>' + j.preview[0].map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>' +
-      j.preview.slice(1).map(row => '<tr>' + row.map(c => `<td>${c}</td>`).join('') + '</tr>').join('') + '</tbody></table>';
+    let previewHtml = '<table><thead><tr>' + j.preview[0].map(h => `<th>${esc(h)}</th>`).join('') + '</tr></thead><tbody>' +
+      j.preview.slice(1).map(row => '<tr>' + row.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>').join('') + '</tbody></table>';
     box.innerHTML = `<div class="tool-result"><span class="ok">✅ 处理完成，共 ${j.rows} 行</span><br><a href="${j.download}" download>⬇️ 点击下载结果文件</a>${previewHtml}</div>`;
     toast('处理完成');
   } catch (e) { $('tableOut').innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`; }
@@ -830,8 +836,8 @@ function handleAgent(j) {
   }
   if (j.status === 'need_confirm') {
     $('agentSteps').innerHTML += `<div class="item" style="background:#fff8e1;border-color:#f0c36d;margin-top:8px;">
-      ⚠️ <b>需要确认</b>：${j.reason}<br>
-      工具: <code>${j.tool}</code> · 参数: <code>${JSON.stringify(j.args)}</code><br>
+      ⚠️ <b>需要确认</b>：${esc(j.reason)}<br>
+      工具: <code>${esc(j.tool)}</code> · 参数: <code>${esc(JSON.stringify(j.args))}</code><br>
       <button onclick="confirmAgent(true)" style="padding:6px 16px;background:#00b894;color:#fff;border:none;border-radius:6px;cursor:pointer;margin-top:6px;">✅ 允许执行</button>
       <button onclick="confirmAgent(false)" style="padding:6px 16px;background:#d63031;color:#fff;border:none;border-radius:6px;cursor:pointer;margin-top:6px;">🚫 拒绝</button>
     </div>`;
@@ -1001,7 +1007,7 @@ async function uploadListing() {
     if (!r.ok) throw new Error(j.error || '上架失败');
     const okCount = j.results.filter(x => x.status === '成功').length;
     $('listResult').innerHTML = `<div class="tool-result"><span class="ok">✅ 成功 ${okCount}/${j.total} 个商品</span><br>` +
-      j.results.map(x => `<div>${x.title || '(空)'} — ${x.status}${x.id ? ' (ID:' + x.id + ')' : ''}</div>`).join('') + '</div>';
+      j.results.map(x => `<div>${esc(x.title || '(空)')} — ${esc(x.status)}${x.id ? ' (ID:' + esc(x.id) + ')' : ''}</div>`).join('') + '</div>';
     toast(`上架完成：${okCount}/${j.total}`);
   } catch (e) { $('listResult').innerHTML = `<div class="hint" style="color:#d63031;">⚠️ ${e.message}</div>`; }
   btn.disabled = false; btn.textContent = '🚀 批量上架';

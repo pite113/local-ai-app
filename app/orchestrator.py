@@ -11,13 +11,17 @@
 import csv as _csv
 import json
 import os
+import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from . import tools
 from .config import Settings
 from .llm import BaseLLM
 from .logger import LogStore
+
+PLAN_TTL = 600  # 作业单 10 分钟过期
 
 PLAN_SYSTEM = (
     "你是批量生产任务的编排器。用户会给你一个任务描述和表格的列名。"
@@ -35,6 +39,7 @@ class Orchestrator:
         self.s = settings
         self.llm = llm
         self.logs = logs
+        self._lock = threading.Lock()
         self._seq = 0
         self.plans = {}  # plan_id -> {filename, raw_path, order, created}
 
@@ -86,19 +91,33 @@ class Orchestrator:
         order = json.loads(tool_calls[0]["arguments"] or "{}")
         plan_id = f"plan_{int(time.time())}_{self._seq}"
         self._seq += 1
-        self.plans[plan_id] = {
-            "filename": filename,
-            "raw_path": raw_path,
-            "order": order,
-            "created": time.time(),
-        }
+        with self._lock:
+            self.plans[plan_id] = {
+                "filename": filename,
+                "raw_path": raw_path,
+                "order": order,
+                "created": time.time(),
+            }
+        self._prune()
         return plan_id, order
+
+    def _prune(self):
+        now = time.time()
+        with self._lock:
+            for pid in list(self.plans.keys()):
+                if now - self.plans[pid]["created"] > PLAN_TTL:
+                    self.plans.pop(pid, None)
 
     def run(self, plan_id: str, approve_images: bool):
         """执行作业单：文案/生图/表格 worker 并行，装配交付。"""
-        plan = self.plans.get(plan_id)
-        if not plan:
-            raise ValueError("作业单不存在或已过期（10分钟内需执行）")
+        with self._lock:
+            plan = self.plans.get(plan_id)
+        if plan is None:
+            raise ValueError("作业单不存在或已过期（10分钟内需执行，请重新生成）")
+        if time.time() - plan["created"] > PLAN_TTL:
+            with self._lock:
+                self.plans.pop(plan_id, None)
+            raise ValueError("作业单已过期（10分钟），请重新生成")
         order = plan["order"]
         with open(plan["raw_path"], "rb") as f:
             raw = f.read()
@@ -176,7 +195,7 @@ class Orchestrator:
                     new_row.append("")
             out_rows.append(new_row)
 
-        out_name = f"orchestrated_{int(time.time())}_{plan['filename']}"
+        out_name = f"orchestrated_{uuid.uuid4().hex}{os.path.splitext(plan['filename'])[1]}"
         out_path = os.path.join(self.s.data_dir, "output", out_name)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         if plan["filename"].lower().endswith(".csv"):

@@ -8,7 +8,6 @@
 - data/trial_minutes.flag 内容 数字 —— 访客体验时长（分钟），0=不限
 """
 import os
-import random
 import secrets
 import smtplib
 import threading
@@ -25,10 +24,24 @@ class Auth:
         self.logs = logs
         self._lock = threading.Lock()
         self._otp = None            # code -> {expiry, attempts}
-        self._sessions = {}         # token -> expiry
+        self._sessions = {}         # token -> {exp, role}
         self._last_send = 0.0
         self._send_count = 0
         self._send_window_start = 0.0
+        self._login_fails = []      # 口令登录失败时间戳（限流用）
+
+    def login_allowed(self) -> bool:
+        """口令登录失败限流：1分钟内失败≥10次则冷却。"""
+        now = time.time()
+        with self._lock:
+            self._login_fails = [t for t in self._login_fails if now - t < 60]
+            return len(self._login_fails) < 10
+
+    def login_fail(self):
+        with self._lock:
+            self._login_fails.append(time.time())
+            if len(self._login_fails) > 100:
+                self._login_fails = self._login_fails[-50:]
 
     # ---------- OTP ----------
     def request_otp(self) -> dict:
@@ -45,7 +58,7 @@ class Auth:
             if self._send_count >= self.s.otp_max_per_hour:
                 return {"sent": False, "error": "本小时发送次数已达上限，请稍后再试"}
 
-            code = f"{random.randint(0, 999999):06d}"
+            code = f"{secrets.randbelow(1000000):06d}"
             self._otp = {"code": code, "expiry": now + self.s.otp_ttl_seconds, "attempts": 0}
             self._last_send = now
             self._send_count += 1

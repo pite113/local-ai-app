@@ -1,6 +1,7 @@
 """本地 AI 工作台 —— Web 应用入口。"""
 import os
 import time
+import uuid
 
 from flask import Flask, jsonify, request, send_file
 
@@ -54,6 +55,27 @@ def _cost(tokens_in: int, tokens_out: int) -> float:
     return tokens_in / 1e6 * settings.price_in + tokens_out / 1e6 * settings.price_out
 
 
+def _safe_output_file(name: str):
+    """防路径穿越：只允许 data/output 下的文件，解析后校验真实路径。"""
+    base = os.path.basename(str(name or ""))
+    out_dir = os.path.realpath(os.path.join(settings.data_dir, "output"))
+    real = os.path.realpath(os.path.join(out_dir, base))
+    if real != out_dir and not real.startswith(out_dir + os.sep):
+        return None
+    if not os.path.exists(real):
+        return None
+    return real
+
+
+def _as_bool(v, default: bool = False) -> bool:
+    """严格布尔解析：仅接受真布尔或明确的 true/false 字符串，避免 "false" 被当真。"""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "on")
+    return default
+
+
 # ---------------- 访问认证 ----------------
 
 _AUTH_EXEMPT_PREFIXES = ("/api/auth",)
@@ -105,6 +127,8 @@ def auth_login():
 @app.post("/api/auth/login_key")
 def auth_login_key():
     """口令登录。role: admin(ADMIN_KEY) / tech(TECH_KEY) / client(CLIENT_KEY)。"""
+    if not auth.login_allowed():
+        return jsonify(error="尝试过于频繁，请稍后再试"), 429
     body = request.get_json(silent=True) or {}
     key = (body.get("key") or "").strip()
     role = (body.get("role") or "").strip()
@@ -115,8 +139,10 @@ def auth_login_key():
     elif role == "client":
         expected = settings.client_key
     else:
+        auth.login_fail()
         return jsonify(error="无效角色"), 400
     if not expected or key != expected:
+        auth.login_fail()
         return jsonify(error="口令错误"), 403
     token = auth.create_session(role)
     resp = jsonify(ok=True, role=role)
@@ -250,7 +276,7 @@ def upload():
                 return jsonify(error="仅支持文本(.txt/.md/.csv/.json/.log)、Word(.docx)、PDF(.pdf)、Excel(.xlsx)"), 400
     text = text.lstrip("\ufeff")  # 去掉 Windows 常见 BOM 头
 
-    dest = os.path.join(settings.upload_dir, name)
+    dest = os.path.join(settings.upload_dir, uuid.uuid4().hex + os.path.splitext(name)[1])
     with open(dest, "wb") as fp:
         fp.write(raw)
 
@@ -357,11 +383,12 @@ def listing_upload():
         file_url = (request.form.get("file_url") or "").strip()
         if file_url.startswith("/api/tools/download/"):
             fname = os.path.basename(file_url)
-            p = os.path.join(settings.data_dir, "output", fname)
-            if os.path.exists(p):
-                with open(p, "rb") as fh:
-                    raw = fh.read()
-                name = fname
+            p = _safe_output_file(fname)
+            if p is None:
+                return jsonify(error="文件不存在"), 404
+            with open(p, "rb") as fh:
+                raw = fh.read()
+            name = fname
     if not raw:
         return jsonify(error="未提供成品文件"), 400
 
@@ -408,7 +435,7 @@ def orchestrator_plan():
         info = tool_mod.preview_table(name, raw)
     except ValueError as e:
         return jsonify(error=str(e)), 400
-    dest = os.path.join(settings.upload_dir, name)
+    dest = os.path.join(settings.upload_dir, uuid.uuid4().hex + os.path.splitext(name)[1])
     with open(dest, "wb") as fp:
         fp.write(raw)
     try:
@@ -433,7 +460,7 @@ def orchestrator_plan():
 def orchestrator_run():
     body = request.get_json(silent=True) or {}
     plan_id = (body.get("plan_id") or "").strip()
-    approve_images = bool(body.get("approve_images"))
+    approve_images = _as_bool(body.get("approve_images"))
     if not plan_id:
         return jsonify(error="缺少 plan_id"), 400
     try:
@@ -531,7 +558,10 @@ def tool_image_generate():
 
 @app.get("/api/tools/image/<name>")
 def tool_image_get(name: str):
-    return send_file(os.path.join(settings.data_dir, "output", name), mimetype="image/png")
+    path = _safe_output_file(name)
+    if path is None:
+        return jsonify(error="文件不存在"), 404
+    return send_file(path, mimetype="image/png")
 
 
 @app.post("/api/tools/table/preview")
@@ -577,7 +607,10 @@ def tool_table_process():
 
 @app.get("/api/tools/download/<name>")
 def tool_download(name: str):
-    return send_file(os.path.join(settings.data_dir, "output", name), as_attachment=True)
+    path = _safe_output_file(name)
+    if path is None:
+        return jsonify(error="文件不存在"), 404
+    return send_file(path, as_attachment=True)
 
 
 if __name__ == "__main__":

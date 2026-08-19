@@ -155,6 +155,8 @@ class Agent:
             "summary": summary,
             "time": time.strftime("%H:%M:%S"),
         })
+        if state.get("tool_queue"):
+            return self._process_queue(run_id)
         return self._step(run_id)
 
     def cancel(self, run_id: str):
@@ -198,55 +200,58 @@ class Agent:
         if not tool_calls:
             return self._finish(state, content)
 
-        tc = tool_calls[0]  # 串行处理第一个工具调用（保持简单可靠）
-        tool = self._find_tool(tc["name"])
-        if tool is None:
+        # 逐个执行全部工具调用，每个都回传对应 call_id 的结果（修复只执行第一个的问题）
+        state["tool_queue"] = list(tool_calls)
+        return self._process_queue(run_id)
+
+    def _process_queue(self, run_id: str):
+        """按顺序执行工具调用队列；敏感操作暂停等待确认。"""
+        state = self.runs.get(run_id)
+        if not state:
+            return {"error": "任务不存在或已过期"}
+        while state.get("tool_queue"):
+            tc = state["tool_queue"].pop(0)
+            call_id = tc["id"] or "call_x"
+            tool = self._find_tool(tc["name"])
+            if tool is None:
+                state["messages"].append({
+                    "role": "tool", "tool_call_id": call_id, "name": tc["name"],
+                    "content": json.dumps({"error": f"未知工具 {tc['name']}"}),
+                })
+                continue
+            try:
+                args = json.loads(tc["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            if tool.get("sensitive"):
+                state["status"] = "await_confirm"
+                state["pending"] = {
+                    "call_id": call_id,
+                    "name": tool["name"],
+                    "args": args,
+                }
+                self.logs.add(type="agent_step", run_id=run_id, message=f"待确认: {tool['name']}", level="warn")
+                return {
+                    "status": "need_confirm",
+                    "run_id": run_id,
+                    "tool": tool["name"],
+                    "args": args,
+                    "reason": tool.get("reason", "该操作需要确认"),
+                }
+            try:
+                result = self._execute_tool(tool["name"], args)
+                summary = self._summarize_result(tool["name"], result)
+            except Exception as e:
+                result = {"error": str(e)}
+                summary = f"执行失败: {e}"
             state["messages"].append({
-                "role": "tool", "tool_call_id": tc["id"] or "call_x",
-                "name": tc["name"],
-                "content": json.dumps({"error": f"未知工具 {tc['name']}"}),
+                "role": "tool", "tool_call_id": call_id, "name": tool["name"],
+                "content": json.dumps(result, ensure_ascii=False)[:2000],
             })
-            return self._step(run_id)
-
-        try:
-            args = json.loads(tc["arguments"] or "{}")
-        except json.JSONDecodeError:
-            args = {}
-
-        if tool.get("sensitive"):
-            state["status"] = "await_confirm"
-            state["pending"] = {
-                "call_id": tc["id"] or "call_x",
-                "name": tool["name"],
-                "args": args,
-            }
-            self.logs.add(type="agent_step", run_id=run_id, message=f"待确认: {tool['name']}", level="warn")
-            return {
-                "status": "need_confirm",
-                "run_id": run_id,
-                "tool": tool["name"],
-                "args": args,
-                "reason": tool.get("reason", "该操作需要确认"),
-            }
-
-        try:
-            result = self._execute_tool(tool["name"], args)
-            summary = self._summarize_result(tool["name"], result)
-        except Exception as e:
-            result = {"error": str(e)}
-            summary = f"执行失败: {e}"
-        state["messages"].append({
-            "role": "tool",
-            "tool_call_id": tc["id"] or "call_x",
-            "name": tool["name"],
-            "content": json.dumps(result, ensure_ascii=False)[:2000],
-        })
-        state["steps"].append({
-            "tool": tool["name"],
-            "approved": True,
-            "summary": summary,
-            "time": time.strftime("%H:%M:%S"),
-        })
+            state["steps"].append({
+                "tool": tool["name"], "approved": True,
+                "summary": summary, "time": time.strftime("%H:%M:%S"),
+            })
         return self._step(run_id)
 
     def _finish(self, state, summary: str):

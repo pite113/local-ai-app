@@ -73,10 +73,12 @@ class LogStore:
         recs = self.records
         chat = [r for r in recs if r.get("type") == "chat_request"]
         errs = [r for r in recs if r.get("level") == "error"]
-        t_in = sum(r.get("tokens_in", 0) for r in chat)
-        t_out = sum(r.get("tokens_out", 0) for r in chat)
-        cost = sum(r.get("cost", 0) for r in chat)
-        durs = [r.get("duration_ms", 0) for r in chat if r.get("duration_ms")]
+        # 成本/token 全量聚合：含 对话/工具/Agent/编排 等所有带 token 的记录
+        cost_recs = [r for r in recs if r.get("tokens_in") is not None]
+        t_in = sum(r.get("tokens_in", 0) for r in cost_recs)
+        t_out = sum(r.get("tokens_out", 0) for r in cost_recs)
+        cost = sum(r.get("cost", 0) for r in cost_recs)
+        durs = [r.get("duration_ms", 0) for r in cost_recs if r.get("duration_ms")]
         by_type = Counter(r.get("type", "other") for r in recs)
 
         # 冗余检测：同一句话被重复提问

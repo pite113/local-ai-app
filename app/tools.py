@@ -7,6 +7,7 @@ import csv
 import io
 import os
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
@@ -144,7 +145,7 @@ def batch_images(prompts, size: str, settings: Settings, logs: LogStore):
         p = (p or "").strip()
         if not p:
             continue
-        fname = f"img_{int(time.time())}_{idx}.png"
+        fname = f"img_{uuid.uuid4().hex}.png"
         fpath = os.path.join(out_dir, fname)
         try:
             if settings.image_provider == "api" and settings.image_api_key:
@@ -215,7 +216,7 @@ def process_table(filename, raw, columns, mode, language, instruction, llm, logs
     for i, row in enumerate(rows[1:]):
         out_rows.append(list(row) + [col_results[j][i] for j in range(len(columns))])
 
-    out_name = f"processed_{int(time.time())}_{os.path.basename(filename)}"
+    out_name = f"processed_{uuid.uuid4().hex}{os.path.splitext(filename)[1]}"
     out_path = os.path.join(settings.data_dir, "output", out_name)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     if filename.lower().endswith(".csv"):

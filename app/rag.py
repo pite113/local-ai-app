@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 
 from .embeddings import BaseEmbedder
 from .textutil import containment, cosine, tokenize
@@ -101,6 +102,7 @@ class Index:
         self.threshold = threshold          # 语义向量相似度下限
         self.lexical_threshold = lexical_threshold  # 词法相似度下限
         self.dedup_threshold = dedup_threshold      # 内容重叠去重阈值
+        self._lock = threading.Lock()               # 文档增删/重建/保存互斥
         self.docs = []
         self._load()
 
@@ -172,16 +174,18 @@ class Index:
             "added": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
             "format": self.FORMAT,
         }
-        self.docs.append(doc)
-        self._save()
+        with self._lock:
+            self.docs.append(doc)
+            self._save()
         return doc
 
     def remove(self, doc_id: str) -> bool:
-        before = len(self.docs)
-        self.docs = [d for d in self.docs if d["id"] != doc_id]
-        if len(self.docs) != before:
-            self._save()
-            return True
+        with self._lock:
+            before = len(self.docs)
+            self.docs = [d for d in self.docs if d["id"] != doc_id]
+            if len(self.docs) != before:
+                self._save()
+                return True
         return False
 
     def list(self):
@@ -215,7 +219,8 @@ class Index:
                 pass
             d["chunks"] = chunks
             done += 1
-        self._save()
+        with self._lock:
+            self._save()
         return done
 
     def detail(self, doc_id: str):
